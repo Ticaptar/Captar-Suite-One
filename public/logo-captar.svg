@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 920" fill="none">
+  <rect width="820" height="920" fill="#FFFFFF"/>
+  <circle cx="430" cy="245" r="180" fill="#C2D83B"/>
+  <circle cx="520" cy="300" r="180" fill="#D13538"/>
+  <circle cx="560" cy="430" r="180" fill="#F28A35"/>
+  <circle cx="400" cy="510" r="180" fill="#494CA0"/>
+  <circle cx="300" cy="420" r="180" fill="#1CA8DC"/>
+  <circle cx="260" cy="305" r="180" fill="#0BAB59"/>
+  <line x1="78" y1="640" x2="742" y2="640" stroke="#2E2E34" stroke-width="8"/>
+  <line x1="78" y1="790" x2="742" y2="790" stroke="#2E2E34" stroke-width="8"/>
+  <text x="410" y="750" text-anchor="middle" fill="#2E2E34" font-size="112" font-family="Times New Roman, serif" font-weight="700">CAPTAR</text>
+  <text x="410" y="870" text-anchor="middle" fill="#2E2E34" font-size="84" font-family="Times New Roman, serif" font-weight="700">AGROBUSINESS</text>
+</svg>
