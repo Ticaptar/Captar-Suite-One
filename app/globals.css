@@ -2244,6 +2244,23 @@ body {
     linear-gradient(130deg, #1f5b7e 0%, #2e6987 45%, #3b7a89 100%);
 }
 
+.hero-grid {
+  display: grid;
+  gap: 0.95rem;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.9fr);
+  align-items: stretch;
+}
+
+.hero-main {
+  min-width: 0;
+}
+
+.hero-side {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
 .home-dashboard .kpi-card,
 .home-dashboard .ops-summary-card,
 .home-dashboard .ops-card,
@@ -2262,4 +2279,9 @@ body {
   .module-dropdown {
     width: min(300px, calc(100vw - 2rem));
   }
+
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
 }

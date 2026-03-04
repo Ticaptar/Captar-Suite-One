@@ -190,7 +190,7 @@ export default async function HomePage() {
       label: "Pendencias de rota",
       value: formatNumber(pendingLinks),
       detail: "Itens em roadmap",
-      chip: "Backlog tecnico",
+      chip: "Roteiro de melhorias",
       tone: "tone-pink",
     },
     {
@@ -237,14 +237,14 @@ export default async function HomePage() {
     <div className="page-shell home-dashboard min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
         <section className="card hero-card p-4 md:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-5">
-            <div className="space-y-3">
+          <div className="hero-grid">
+            <div className="hero-main space-y-3">
               <BrandLogo compact />
               <div className="space-y-1">
                 <p className="hero-kicker">CAPTAR SUITE</p>
-                <h1 className="hero-title">Dashboard de Controle Executivo</h1>
+                <h1 className="hero-title">Command Center Operacional</h1>
                 <p className="hero-subtitle">
-                  Panorama moderno da operacao com foco em contratos, modulos e prioridades do dia.
+                  Visao consolidada de contratos, modulos e pendencias para orientar a operacao em tempo real.
                 </p>
               </div>
               <div className="hero-chip-row">
@@ -255,11 +255,13 @@ export default async function HomePage() {
               </div>
             </div>
 
-            <div className="hero-meta hero-meta-strong">
-              <p className="hero-meta-label">Volume total</p>
-              <p className="hero-meta-value">{formatNumber(dashboard.contratosTotal)} contratos</p>
-              <p className="hero-meta-label mt-2">Visitas no funil</p>
-              <p className="hero-meta-value">{formatNumber(dashboard.visitasTotal)}</p>
+            <div className="hero-side">
+              <div className="hero-meta hero-meta-strong">
+                <p className="hero-meta-label">Volume total</p>
+                <p className="hero-meta-value">{formatNumber(dashboard.contratosTotal)} contratos</p>
+                <p className="hero-meta-label mt-2">Visitas no funil</p>
+                <p className="hero-meta-value">{formatNumber(dashboard.visitasTotal)}</p>
+              </div>
             </div>
           </div>
         </section>
@@ -387,14 +389,6 @@ export default async function HomePage() {
                 {item.label}
               </Link>
             ))}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link href="/contratos/saida-insumos/novo" className="btn-primary">
-              Novo contrato
-            </Link>
-            <Link href="/visitas/nova" className="btn-secondary">
-              Nova visita
-            </Link>
           </div>
         </section>
       </main>
