@@ -112,8 +112,13 @@ function parseOptionalNullablePositiveInt(value: unknown): number | null | undef
 function parseOptionalNumber(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === "") return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
   const text = String(value).trim();
-  const parsed = Number(text.replace(/\./g, "").replace(",", "."));
+  if (!text) return null;
+  const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : text;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

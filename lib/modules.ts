@@ -12,7 +12,7 @@ export type ModuleDefinition = {
 export const moduleDefinitions: ModuleDefinition[] = [
   {
     id: "negociacoes",
-    label: "Negociacões e Contratos",
+    label: "Negociacoes e Contratos",
     links: [
       { label: "Contrato de Saida de Insumos", href: "/contratos/saida-insumos" },
       { label: "Contrato de Entrada de Animais", href: "/contratos/entrada-animais" },
@@ -25,9 +25,17 @@ export const moduleDefinitions: ModuleDefinition[] = [
       // { label: "Habilitacao P/ Venda", href: "#" },
       // { label: "Pre Oferta", href: "#" },
       // { label: "Acerto Frete", href: "#" },
-      { label: "Mapa de Pesagem", href: "/mapa-pesagem" },
       // { label: "Tabela @ Produzida", href: "#" },
     ],
+  },
+  {
+    id: "pesagens",
+    label: "Pesagens",
+    links: [
+      { label: "Pesagem de Entrada de Animais", href: "/pesagens/entrada-animais" },
+      { label: "Mapa de Pesagem", href: "/mapa-pesagem" },
+    ],
+    
   },
   {
     id: "configuracoes",

@@ -147,6 +147,10 @@ export default function PesagemEntradaAnimaisFormPage() {
           pesoLiquido: toCurrency(data.pesoLiquido),
           operacao: toText(data.operacao),
         }));
+        setDocumentosFiscais(parseDocumentosRows(data.documentosFiscais));
+        setMotivosAtraso(parseMotivoRows(data.motivosAtraso));
+        setMotivosEspera(parseMotivoRows(data.motivosEspera));
+        setCalendario(parseCalendarioRows(data.calendario));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Falha ao carregar pesagem.");
       } finally {
@@ -298,3 +302,6 @@ function toNullableInt(value: string): number | null { const parsed = Number.par
 function toCurrency(value: unknown): string { const parsed = Number(value); return Number.isFinite(parsed) ? formatCurrency(parsed) : "0,00"; }
 function toDateInput(value: unknown): string { const text = toText(value); const m = text.match(/^(\d{4}-\d{2}-\d{2})/); if (m) return m[1]; const d = new Date(text); return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10); }
 function toTimeInput(value: unknown): string { const text = toText(value); const m = text.match(/^(\d{2}:\d{2})/); return m?.[1] ?? ""; }
+function parseDocumentosRows(value: unknown): DocumentoFiscal[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => ({ documento: toText((item as Record<string, unknown>).documento) })); }
+function parseMotivoRows(value: unknown): MotivoRow[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => { const row = item as Record<string, unknown>; return { motivo: toText(row.motivo), tempoMinutos: String(Number.parseInt(String(row.tempoMinutos ?? 0), 10) || 0) }; }); }
+function parseCalendarioRows(value: unknown): CalendarioRow[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => { const row = item as Record<string, unknown>; return { data: toDateInput(row.data), dia: toText(row.dia), feriado: Boolean(row.feriado), pago: Boolean(row.pago), valor: toCurrency(row.valor) }; }); }
