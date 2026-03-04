@@ -1,5 +1,5 @@
 ﻿import type { Metadata } from "next";
-import { Manrope, Playfair_Display, Sora } from "next/font/google";
+import { Manrope, Sora, Space_Grotesk } from "next/font/google";
 import { PwaRegister } from "@/components/pwa-register";
 import { SplashScreen } from "@/components/splash-screen";
 import "./globals.css";
@@ -14,7 +14,7 @@ const sora = Sora({
   subsets: ["latin"],
 });
 
-const playfair = Playfair_Display({
+const spaceGrotesk = Space_Grotesk({
   variable: "--font-playfair",
   subsets: ["latin"],
 });
@@ -41,7 +41,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${manrope.variable} ${sora.variable} ${playfair.variable} antialiased`}>
+      <body className={`${manrope.variable} ${sora.variable} ${spaceGrotesk.variable} antialiased`}>
         <PwaRegister />
         <SplashScreen />
         {children}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
@@ -141,7 +141,7 @@ const MAPA_FIELDS: FieldDef[] = [
   { key: "observacao", label: "Observacao", span: 2 },
 ];
 
-export default function MapaPesagemPage() {
+function MapaPesagemPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contratoIdFromQuery = useMemo(() => {
@@ -814,6 +814,14 @@ export default function MapaPesagemPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function MapaPesagemPage() {
+  return (
+    <Suspense fallback={<div className="legacy-shell p-4">Carregando mapa de pesagem...</div>}>
+      <MapaPesagemPageContent />
+    </Suspense>
   );
 }
 
