@@ -96,7 +96,7 @@ export default function VisitasListPage() {
         <ModuleHeader />
 
         <section className="card p-3">
-          <div className="legacy-toolbar">
+          <div className="legacy-toolbar compact-toolbar">
             <div className="legacy-toolbar-left">
               <h1 className="legacy-title">Visita</h1>
               <div className="legacy-actions">
@@ -261,4 +261,3 @@ function toMoney(value: number): string {
     maximumFractionDigits: 2,
   }).format(value ?? 0);
 }
-

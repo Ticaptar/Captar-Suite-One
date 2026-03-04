@@ -10,7 +10,7 @@ import type { ContratoStatus } from "@/lib/types/contrato";
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
 
 type TabKey = "dados" | "itens" | "frete" | "financeiro" | "notas" | "clausulas" | "dados_gerais" | "custos" | "outros";
-type ModalType = "item" | "frete" | "financeiro" | "nota" | "mapa" | "clausula_catalogo" | "custo" | null;
+type ModalType = "item" | "frete" | "financeiro" | "nota" | "mapa" | "custo" | "clausula" | null;
 type PnPickerTarget = "parceiro" | "emissor" | "comissionado" | "transportador" | "originador";
 
 type EmpresaOption = {
@@ -82,7 +82,17 @@ type ClausulaCatalogoItem = {
   id: string;
   codigo: string;
   titulo: string;
-  descricao: string;
+};
+
+type ModeloClausulaDetalhe = {
+  id: string;
+  codigo: string;
+  titulo: string;
+  clausulas: Array<{
+    codigo: string;
+    referencia: string;
+    descricao: string;
+  }>;
 };
 
 type FinanceiroRow = {
@@ -294,6 +304,16 @@ const QUALIDADE_OPTIONS = [
   "RUIM",
 ];
 
+const TIPO_ENTRADA_OPTIONS = [
+  "@ Fixa",
+  "@ Produzida",
+  "Custo por Consumo",
+  "Boitel",
+  "Compra",
+  "Permuta",
+  "Parceria - Recria",
+];
+
 const FORMA_PAGAMENTO_FALLBACK: CatalogOption[] = [
   { value: "BOLETO", label: "Boleto" },
   { value: "TRANSFERENCIA", label: "Transferência" },
@@ -309,6 +329,10 @@ const DADOS_GERAIS_LIBERADOS: Array<keyof DadosGeraisForm> = [
   "sexo",
   "quantidadeNegociada",
   "animaisMapa",
+  "animaisMortos",
+  "animaisLesionados",
+  "animaisChegada",
+  "pesoChegadaKg",
   "dls",
   "categoria",
   "racaPredominante",
@@ -332,9 +356,12 @@ export default function NovoContratoEntradaAnimaisPage() {
   const [saving, setSaving] = useState(false);
   const [loadingContrato, setLoadingContrato] = useState(false);
   const [savedContratoId, setSavedContratoId] = useState<number | null>(null);
+  const [origemVisita, setOrigemVisita] = useState(false);
+  const [origemVisitaId, setOrigemVisitaId] = useState<number | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [loadingEmpresas, setLoadingEmpresas] = useState(true);
   const [loadingParceiros, setLoadingParceiros] = useState(true);
+  const [parceirosWarmLoaded, setParceirosWarmLoaded] = useState(false);
   const [pnPickerTarget, setPnPickerTarget] = useState<PnPickerTarget | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -378,6 +405,7 @@ export default function NovoContratoEntradaAnimaisPage() {
   const [custos, setCustos] = useState<CustoCategoriaRow[]>([]);
   const [notas, setNotas] = useState<Record<string, string>[]>([]);
   const [clausulas, setClausulas] = useState<Record<string, string>[]>([]);
+  const [editingClausulaIndex, setEditingClausulaIndex] = useState<number | null>(null);
   const [clausulasCatalogo, setClausulasCatalogo] = useState<ClausulaCatalogoItem[]>([]);
   const [mapas, setMapas] = useState<Record<string, string>[]>([]);
   const [clausulaCodigo, setClausulaCodigo] = useState("");
@@ -386,7 +414,7 @@ export default function NovoContratoEntradaAnimaisPage() {
     () =>
       empresas.map((empresa) => ({
         value: String(empresa.id),
-        label: `${empresa.codigo ?? "SEM-COD"} - ${empresa.nome}${empresa.cnpj ? ` - ${formatCnpj(empresa.cnpj)}` : ""}`,
+        label: `${empresa.codigo ?? "SEM-CÓD"} - ${empresa.nome}${empresa.cnpj ? ` - ${formatCnpj(empresa.cnpj)}` : ""}`,
       })),
     [empresas],
   );
@@ -486,6 +514,35 @@ export default function NovoContratoEntradaAnimaisPage() {
       return sanitized as DadosGeraisForm;
     });
   };
+
+  useEffect(() => {
+    const pesoMapaKg = parseDecimal(dadosGerais.pesoMapaKg);
+    const pesoChegadaKg = parseDecimal(dadosGerais.pesoChegadaKg);
+    const quebraKg = Math.max(pesoMapaKg - pesoChegadaKg, 0);
+    const quebraArroba = quebraKg / 15;
+    const quebraPercentual = pesoMapaKg > 0 ? (quebraKg / pesoMapaKg) * 100 : 0;
+
+    const proximaQuebraKg = toDecimal(quebraKg);
+    const proximaQuebraArroba = toDecimal(quebraArroba);
+    const proximaQuebraPercentual = toDecimal(quebraPercentual);
+
+    setDadosGeraisState((prev) => {
+      if (
+        prev.quebraKg === proximaQuebraKg &&
+        prev.quebraArroba === proximaQuebraArroba &&
+        prev.quebraPercentual === proximaQuebraPercentual
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        quebraKg: proximaQuebraKg,
+        quebraArroba: proximaQuebraArroba,
+        quebraPercentual: proximaQuebraPercentual,
+      };
+    });
+  }, [dadosGerais.pesoChegadaKg, dadosGerais.pesoMapaKg]);
+
   const [outros, setOutros] = useState<OutrosForm>({
     dataEmbarque: "",
     dataPrevistaChegada: "",
@@ -509,6 +566,12 @@ export default function NovoContratoEntradaAnimaisPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const idParam = params.get("id");
+    const fromVisitaParam = params.get("fromVisita");
+    const visitaIdParam = params.get("visitaId");
+    const visitaIdParsed = Number.parseInt(visitaIdParam ?? "", 10);
+    const fromVisita = fromVisitaParam === "1" || String(fromVisitaParam).toLowerCase() === "true";
+    setOrigemVisita(fromVisita);
+    setOrigemVisitaId(Number.isNaN(visitaIdParsed) || visitaIdParsed <= 0 ? null : visitaIdParsed);
     if (!idParam) {
       setEditingContratoId(null);
       return;
@@ -564,8 +627,12 @@ export default function NovoContratoEntradaAnimaisPage() {
       setLoadingParceiros(true);
       try {
         const term = parceiroSearch.trim();
+        if (!term && parceirosWarmLoaded) {
+          if (active) setLoadingParceiros(false);
+          return;
+        }
         const params = new URLSearchParams();
-        params.set("limit", term.length >= 2 ? "200" : "80");
+        params.set("limit", term.length >= 2 ? "5000" : "1500");
         if (term) params.set("search", term);
         const parceirosUrl = `/api/cadastros/parceiros?${params.toString()}`;
         if (typeof window !== "undefined") {
@@ -578,7 +645,9 @@ export default function NovoContratoEntradaAnimaisPage() {
         if (!response.ok) throw new Error("Falha ao carregar parceiros.");
         const data = (await response.json()) as ParceiroOption[];
         if (active) {
+          if (!term) setParceirosWarmLoaded(true);
           setParceiros((prev) => {
+            if (term) return data;
             const selectedIds = new Set(
               [form.parceiroId, form.emissorNotaId, form.comissionadoId, dadosGerais.originador]
                 .map((item) => String(item ?? "").trim())
@@ -603,7 +672,7 @@ export default function NovoContratoEntradaAnimaisPage() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [dadosGerais.originador, form.comissionadoId, form.emissorNotaId, form.parceiroId, parceiroSearch]);
+  }, [dadosGerais.originador, form.comissionadoId, form.emissorNotaId, form.parceiroId, parceiroSearch, parceirosWarmLoaded]);
 
   function openPnPicker(target: PnPickerTarget) {
     setPnPickerTarget(target);
@@ -726,7 +795,15 @@ export default function NovoContratoEntradaAnimaisPage() {
     if (modalType !== "item") return;
     const term = itemSearch.trim();
     if (!term) {
-      setItemCatalog((prev) => ({ ...prev, itens: baseItemOptions }));
+      setItemCatalog((prev) => {
+        const selectedFromPrev = findCatalogOptionByValue(prev.itens, itemDraft.itemId);
+        const selectedFromBase = findCatalogOptionByValue(baseItemOptions, itemDraft.itemId);
+        const selected = selectedFromPrev ?? selectedFromBase;
+        return {
+          ...prev,
+          itens: normalizeCatalogOptions([...(selected ? [selected] : []), ...baseItemOptions]),
+        };
+      });
       setLoadingItensSap(false);
       return;
     }
@@ -747,7 +824,15 @@ export default function NovoContratoEntradaAnimaisPage() {
         const data = (await response.json()) as Partial<ItemCatalog>;
         if (!active) return;
         const itensEncontrados = normalizeCatalogOptions(data.itens);
-        setItemCatalog((prev) => ({ ...prev, itens: itensEncontrados }));
+        setItemCatalog((prev) => {
+          const selectedFromPrev = findCatalogOptionByValue(prev.itens, itemDraft.itemId);
+          const selectedFromBase = findCatalogOptionByValue(baseItemOptions, itemDraft.itemId);
+          const selected = selectedFromPrev ?? selectedFromBase;
+          return {
+            ...prev,
+            itens: normalizeCatalogOptions([...(selected ? [selected] : []), ...itensEncontrados]),
+          };
+        });
       } catch (loadError) {
         if (!active) return;
         if ((loadError as { name?: string })?.name === "AbortError") return;
@@ -762,7 +847,7 @@ export default function NovoContratoEntradaAnimaisPage() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [baseItemOptions, itemSearch, modalType]);
+  }, [baseItemOptions, itemDraft.itemId, itemSearch, modalType]);
 
   async function ensureSapEmpresaCache(empresa: EmpresaOption): Promise<EmpresaOption> {
     const response = await fetch("/api/cadastros/empresas", {
@@ -808,14 +893,14 @@ export default function NovoContratoEntradaAnimaisPage() {
     let active = true;
     async function loadClausulasCatalogo() {
       try {
-        const response = await fetch("/api/cadastros/contratos/clausulas", { cache: "no-store" });
-        if (!response.ok) throw new Error("Falha ao carregar catálogo de cláusulas.");
+        const response = await fetch("/api/cadastros/contratos/modelos-clausulas", { cache: "no-store" });
+        if (!response.ok) throw new Error("Falha ao carregar modelos de cláusulas.");
         const data = (await response.json()) as ClausulaCatalogoItem[];
         if (!active) return;
         setClausulasCatalogo(sortClausulasCatalogo(data));
       } catch (loadError) {
         if (!active) return;
-        setError(loadError instanceof Error ? loadError.message : "Falha ao carregar catálogo de cláusulas.");
+        setError(loadError instanceof Error ? loadError.message : "Falha ao carregar modelos de cláusulas.");
       }
     }
     loadClausulasCatalogo().catch(() => undefined);
@@ -846,7 +931,13 @@ export default function NovoContratoEntradaAnimaisPage() {
         if (!active) return;
 
         const contrato = (payload.contrato ?? {}) as Record<string, unknown>;
+        const refObjectId = toOptionalInt(asText(contrato.ref_object_id));
+        if (!origemVisita && refObjectId) {
+          setOrigemVisita(true);
+          setOrigemVisitaId((prev) => prev ?? refObjectId);
+        }
         const dadosGeraisData = asObject(contrato.dadosGerais);
+        const outrosData = asObject(contrato.outros);
         const parceiroCodigoBase = asText(contrato.parceiro_codigo_base) || asText(contrato.parceiro_codigo_snapshot);
         const parceiroNomeBase = asText(contrato.parceiro_nome_base) || asText(contrato.parceiro_nome_snapshot);
         const parceiroDocumentoBase = asText(contrato.parceiro_documento_base) || asText(contrato.parceiro_documento_snapshot);
@@ -947,15 +1038,17 @@ export default function NovoContratoEntradaAnimaisPage() {
         }));
 
         setOutros({
-          dataEmbarque: toDateInputValue(contrato.dt_embarque),
-          dataPrevistaChegada: toDateInputValue(contrato.dt_previsao_chegada ?? contrato.previsao_chegada),
-          freteConfinamento: asText(contrato.frete_confinamento) || "",
-          fazendaDestino: asText(contrato.fazenda_destino_id) || "",
-          fazendaOrigem: asText(contrato.fazenda_origem) || "",
-          descontoAcerto: Boolean(contrato.desconto_acerto),
-          descricaoDesconto: asText(contrato.descricao_desconto) || "",
-          pesoReferencia: asText(contrato.peso_referencia) || "Fazenda Origem",
-          observacao: asText(contrato.observacao) || "",
+          dataEmbarque: toDateInputValue(outrosData.dataEmbarque || contrato.dt_embarque),
+          dataPrevistaChegada: toDateInputValue(
+            outrosData.dataPrevistaChegada || contrato.dt_previsao_chegada || contrato.previsao_chegada,
+          ),
+          freteConfinamento: asText(outrosData.freteConfinamento) || asText(contrato.frete_confinamento) || "",
+          fazendaDestino: asText(outrosData.fazendaDestino) || asText(contrato.fazenda_destino_id) || "",
+          fazendaOrigem: asText(outrosData.fazendaOrigem) || asText(contrato.fazenda_origem) || "",
+          descontoAcerto: asBoolean(outrosData.descontoAcerto) || Boolean(contrato.desconto_acerto),
+          descricaoDesconto: asText(outrosData.descricaoDesconto) || asText(contrato.descricao_desconto) || "",
+          pesoReferencia: asText(outrosData.pesoReferencia) || asText(contrato.peso_referencia) || "Fazenda Origem",
+          observacao: asText(outrosData.observacao) || asText(contrato.observacao) || "",
         });
 
         setCustosResumo({
@@ -986,6 +1079,16 @@ export default function NovoContratoEntradaAnimaisPage() {
         setNotas((payload.notas ?? []).map(mapGenericRowFromApi));
         setClausulas((payload.clausulas ?? []).map(mapGenericRowFromApi));
         setMapas((payload.mapas ?? []).map(mapGenericRowFromApi));
+        setClausulaCodigo(
+          asPositiveString(contrato.clausulaModeloId) ??
+            asPositiveString(contrato.clausula_id) ??
+            "",
+        );
+        setClausulaTitulo(
+          asText(contrato.clausulaTitulo) ||
+            asText(contrato.titulo_clausula) ||
+            "",
+        );
 
         const parceiroDisplay = joinTextParts([
           parceiroCodigoBase,
@@ -1049,7 +1152,7 @@ export default function NovoContratoEntradaAnimaisPage() {
     return () => {
       active = false;
     };
-  }, [editingContratoId, isEditMode, itemCatalog]);
+  }, [editingContratoId, isEditMode, origemVisita]);
 
   function openModal(type: ModalType) {
     setError("");
@@ -1096,7 +1199,6 @@ export default function NovoContratoEntradaAnimaisPage() {
     }
     if (type === "nota") setDraft({ nf: "" });
     if (type === "mapa") setDraft({ descricao: "", dataInicio: "", quantidade: "0,00" });
-    if (type === "clausula_catalogo") setDraft({ codigo: "", titulo: "", descricao: "" });
     if (type === "custo") {
       setDraft({
         categoria: "",
@@ -1117,6 +1219,14 @@ export default function NovoContratoEntradaAnimaisPage() {
         trackCount: "",
       });
     }
+    if (type === "clausula") {
+      setEditingClausulaIndex(null);
+      setDraft({
+        codigo: "",
+        referencia: clausulaTitulo.trim(),
+        descricao: "",
+      });
+    }
   }
 
   async function saveModal() {
@@ -1129,7 +1239,11 @@ export default function NovoContratoEntradaAnimaisPage() {
 
       const row: ItemRow = {
         itemId: itemDraft.itemId,
-        item: optionLabel(itemCatalog.itens, itemDraft.itemId) || itemDraft.itemId,
+        item: normalizeItemDisplayLabel(
+          optionLabelByItemValue(itemCatalog.itens, itemDraft.itemId) ||
+            optionLabelByItemValue(baseItemOptions, itemDraft.itemId) ||
+            itemDraft.itemId,
+        ),
         undMedidaId: itemDraft.undMedidaId,
         undMedida: optionLabel(itemCatalog.unidades, itemDraft.undMedidaId),
         valorUnitario: toDecimal(valorUnitario),
@@ -1207,39 +1321,35 @@ export default function NovoContratoEntradaAnimaisPage() {
       setModalType(null);
       return;
     }
+    if (modalType === "clausula") {
+      const descricao = (draft.descricao ?? "").trim();
+      if (!descricao) {
+        setError("Informe a descrição da cláusula.");
+        return;
+      }
+      const row = {
+        codigo: (draft.codigo ?? "").trim(),
+        referencia: (draft.referencia ?? "").trim() || clausulaTitulo.trim(),
+        descricao,
+      };
+      setClausulas((prev) => {
+        const next = [...prev];
+        if (editingClausulaIndex !== null && editingClausulaIndex >= 0 && editingClausulaIndex < next.length) {
+          next[editingClausulaIndex] = row;
+        } else {
+          next.push(row);
+        }
+        return sortClausulasRows(next);
+      });
+      setEditingClausulaIndex(null);
+      setModalType(null);
+      return;
+    }
     if (modalType === "nota") {
       if (!draft.nf?.trim()) return setError("Informe a NF.");
       return setNotas((prev) => [...prev, draft]), setModalType(null);
     }
     if (modalType === "mapa") return setMapas((prev) => [...prev, draft]), setModalType(null);
-    if (modalType === "clausula_catalogo") {
-      const codigo = draft.codigo?.trim() ?? "";
-      const titulo = draft.titulo?.trim() ?? "";
-      const descricao = draft.descricao?.trim() ?? "";
-      if (!codigo) return setError("Informe o código da cláusula.");
-      if (!titulo) return setError("Informe o título da cláusula.");
-      if (!descricao) return setError("Informe a descrição da cláusula.");
-
-      try {
-        const response = await fetch("/api/cadastros/contratos/clausulas", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ codigo, titulo, descricao }),
-        });
-        if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? "Falha ao cadastrar cláusula.");
-        }
-        const created = (await response.json()) as ClausulaCatalogoItem;
-        setClausulasCatalogo((prev) => sortClausulasCatalogo(upsertClausulaCatalogo(prev, created)));
-        setClausulaCodigo(created.id);
-        setClausulaTitulo(created.titulo);
-        setModalType(null);
-      } catch (saveError) {
-        setError(saveError instanceof Error ? saveError.message : "Falha ao cadastrar cláusula.");
-      }
-      return;
-    }
   }
 
   function toggleItemSelecionado(index: number) {
@@ -1256,42 +1366,115 @@ export default function NovoContratoEntradaAnimaisPage() {
     setItemSelecionados(itens.map((_, index) => index));
   }
 
+  async function applyClausulasDoModelo(clausulaId: string, options?: { replace?: boolean }) {
+    const selected = clausulasCatalogo.find((item) => item.id === clausulaId);
+    if (!selected) {
+      setError("Selecione um modelo de contrato.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/cadastros/contratos/modelos-clausulas/${selected.id}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Falha ao carregar cláusulas do modelo selecionado.");
+      }
+
+      const detalhe = (await response.json()) as ModeloClausulaDetalhe;
+      const linhas = Array.isArray(detalhe.clausulas) ? detalhe.clausulas : [];
+      if (linhas.length === 0) {
+        setError("O modelo selecionado não possui cláusulas cadastradas.");
+        return;
+      }
+
+      const referenciaPadrao = clausulaTitulo.trim() || detalhe.titulo || selected.titulo;
+      if (!referenciaPadrao) {
+        setError("Informe o título do contrato para aplicar o modelo.");
+        return;
+      }
+
+      const linhasMapeadas = sortClausulasRows(
+        linhas
+        .map((linha) => ({
+          codigo: String(linha.codigo ?? "").trim(),
+          referencia: String(linha.referencia ?? "").trim() || referenciaPadrao,
+          descricao: String(linha.descricao ?? "").trim(),
+        }))
+        .filter((linha) => linha.descricao.length > 0),
+      );
+
+      if (linhasMapeadas.length === 0) {
+        setError("O modelo selecionado não possui cláusulas válidas para inserção.");
+        return;
+      }
+
+      setClausulaTitulo(referenciaPadrao);
+      if (options?.replace) {
+        setClausulas(linhasMapeadas);
+        return;
+      }
+      setClausulas((prev) => {
+        const seen = new Set(
+          prev.map((row) => `${row.codigo ?? ""}|${row.referencia ?? ""}|${row.descricao ?? ""}`.toUpperCase()),
+        );
+        const merged = [...prev];
+        for (const linha of linhasMapeadas) {
+          const key = `${linha.codigo}|${linha.referencia}|${linha.descricao}`.toUpperCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(linha);
+        }
+        return sortClausulasRows(merged);
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Falha ao inserir cláusulas do modelo.");
+      return;
+    }
+  }
+
   function handleSelectClausulaCatalogo(clausulaId: string) {
+    setError("");
     setClausulaCodigo(clausulaId);
     const selected = clausulasCatalogo.find((item) => item.id === clausulaId);
     if (selected) {
       setClausulaTitulo(selected.titulo);
     }
+    if (!clausulaId) return;
+    void applyClausulasDoModelo(clausulaId, { replace: true });
   }
 
-  function handleAddClausulaContrato() {
-    const selected = clausulasCatalogo.find((item) => item.id === clausulaCodigo);
-    if (!selected) {
-      setError("Selecione uma cláusula cadastrada.");
+  async function handleAddClausulaContrato() {
+    if (!clausulaCodigo) {
+      setError("Selecione um modelo de contrato.");
       return;
     }
+    await applyClausulasDoModelo(clausulaCodigo);
+  }
 
-    const referencia = clausulaTitulo.trim() || selected.titulo;
-    const descricao = selected.descricao.trim();
-    if (!referencia) {
-      setError("Informe a referência/título da cláusula no contrato.");
-      return;
-    }
-    if (!descricao) {
-      setError("A cláusula selecionada não possui descrição.");
-      return;
-    }
+  function handleNovaClausulaContrato() {
+    setError("");
+    setEditingClausulaIndex(null);
+    setDraft({
+      codigo: "",
+      referencia: clausulaTitulo.trim(),
+      descricao: "",
+    });
+    setModalType("clausula");
+  }
 
-    setClausulas((prev) => [
-      ...prev,
-      {
-        codigo: selected.codigo,
-        referencia,
-        descricao,
-      },
-    ]);
-    setClausulaCodigo("");
-    setClausulaTitulo("");
+  function handleEditarClausulaContrato(index: number) {
+    const row = clausulas[index];
+    if (!row) return;
+    setError("");
+    setEditingClausulaIndex(index);
+    setDraft({
+      codigo: row.codigo ?? "",
+      referencia: row.referencia ?? "",
+      descricao: row.descricao ?? "",
+    });
+    setModalType("clausula");
   }
 
   async function handleSaveContract(options?: { gerarPdf?: boolean }) {
@@ -1450,6 +1633,7 @@ export default function NovoContratoEntradaAnimaisPage() {
           objeto: toOptionalString(form.objeto),
           execucao: toOptionalString(form.execucao),
           observacoes: toOptionalString(outros.observacao),
+          outros: toOutrosPayload(outros),
           dadosGerais: toDadosGeraisPayload(dadosGerais),
           custosResumo: toCustosResumoPayload(custosResumo),
           custosCategorias: custos,
@@ -1458,6 +1642,8 @@ export default function NovoContratoEntradaAnimaisPage() {
           financeiros,
           notas,
           clausulas,
+          clausulaModeloId: toOptionalInt(clausulaCodigo),
+          clausulaTitulo: toOptionalString(clausulaTitulo),
           mapas,
         }),
       });
@@ -1487,7 +1673,7 @@ export default function NovoContratoEntradaAnimaisPage() {
     }
   }
 
-  async function handleChangeStatus(nextStatus: ContratoStatus) {
+  async function handleChangeStatus(nextStatus: ContratoStatus, options?: { gerarPedido?: boolean }) {
     const contratoId = savedContratoId ?? editingContratoId ?? null;
     if (!contratoId || Number.isNaN(contratoId)) {
       setError("Salve o contrato antes de atualizar o status.");
@@ -1498,19 +1684,40 @@ export default function NovoContratoEntradaAnimaisPage() {
     setSuccess("");
     setStatusUpdating(true);
     try {
+      const shouldGenerate = options?.gerarPedido === true;
       const response = await fetch(`/api/contratos/entrada-animais/${contratoId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: nextStatus }),
+        body: JSON.stringify({
+          status: nextStatus,
+          gerarPedido: shouldGenerate,
+        }),
       });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+        sapPedido?: {
+          docEntry?: number | null;
+          docNum?: number | null;
+          jaExistente?: boolean;
+        } | null;
+      } | null;
 
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? "Falha ao atualizar status.");
       }
 
       setCurrentStatus(nextStatus);
-      setSuccess(`Status atualizado para "${statusLabel(nextStatus)}".`);
+      if (shouldGenerate) {
+        if (body?.sapPedido?.jaExistente) {
+          const docNum = body.sapPedido.docNum ?? body.sapPedido.docEntry ?? null;
+          setSuccess(docNum ? `Pedido SAP ja existente (#${docNum}). Status atualizado.` : "Pedido SAP ja existente. Status atualizado.");
+        } else {
+          const docNum = body?.sapPedido?.docNum ?? body?.sapPedido?.docEntry ?? null;
+          setSuccess(docNum ? `Pedido de compra SAP #${docNum} gerado com sucesso.` : "Pedido de compra SAP gerado com sucesso.");
+        }
+      } else {
+        setSuccess(`Status atualizado para "${statusLabel(nextStatus)}".`);
+      }
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Erro inesperado ao atualizar status.");
     } finally {
@@ -1565,13 +1772,18 @@ export default function NovoContratoEntradaAnimaisPage() {
             <button
               type="button"
               className="legacy-btn"
-              onClick={() => handleChangeStatus("ativo")}
+              onClick={() => handleChangeStatus("ativo", { gerarPedido: true })}
               disabled={saving || statusUpdating || loadingContrato}
             >
               {statusUpdating ? "Atualizando..." : "Aprovar/Gerar Pedido"}
             </button>
           </div>
           {loadingContrato && <p className="legacy-message">Carregando contrato...</p>}
+          {origemVisita && (
+            <p className="legacy-message">
+              Contrato gerado a partir da visita{origemVisitaId ? ` #${origemVisitaId}` : ""}. Complete os dados do contrato antes de aprovar/gerar pedido.
+            </p>
+          )}
           {success && <p className="legacy-message success">{success}</p>}
           {error && <p className="legacy-message error">{error}</p>}
 
@@ -1588,7 +1800,7 @@ export default function NovoContratoEntradaAnimaisPage() {
                 disabled={isEditMode}
                 loading={loadingEmpresas}
               />
-              <label className="legacy-field"><span>Tipo Contrato</span><input className="legacy-input" value="Entrada de Animais" disabled /></label>
+              <label className="legacy-field"><span>Tipo de Contrato</span><input className="legacy-input" value="Entrada de Animais" disabled /></label>
               <label className="legacy-field"><span>Exercício</span><input className="legacy-input" value={form.exercicio} readOnly disabled /></label>
               <label className="legacy-field">
                 <span>Número</span>
@@ -1698,13 +1910,14 @@ export default function NovoContratoEntradaAnimaisPage() {
                 onSelecionar={handleSelectClausulaCatalogo}
                 onChangeTitulo={setClausulaTitulo}
                 onAdicionar={handleAddClausulaContrato}
-                onCadastrarNova={() => openModal("clausula_catalogo")}
+                onNova={handleNovaClausulaContrato}
+                onEditar={handleEditarClausulaContrato}
                 onRemove={(index) => setClausulas((prev) => prev.filter((_, i) => i !== index))}
               />
             )}
             {activeTab === "dados_gerais" && (
               <div className="legacy-grid cols-4 mt-2 dados-gerais-lock">
-                <label className="legacy-field" data-editavel="true"><span>Tipo Entrada</span><select className="legacy-select" value={dadosGerais.tipoEntrada} onChange={(event) => setDadosGerais((prev) => ({ ...prev, tipoEntrada: event.target.value }))}><option value="Compra">Compra</option><option value="Parceria">Parceria</option><option value="Outros">Outros</option></select></label>
+                <label className="legacy-field" data-editavel="true"><span>Tipo Entrada</span><select className="legacy-select" value={dadosGerais.tipoEntrada} onChange={(event) => setDadosGerais((prev) => ({ ...prev, tipoEntrada: event.target.value }))}>{TIPO_ENTRADA_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
                 <label className="legacy-field" data-editavel="true"><span>Tabela de Preço</span><input className="legacy-input" value={dadosGerais.tabelaPreco} onChange={(event) => setDadosGerais((prev) => ({ ...prev, tabelaPreco: event.target.value }))} /></label>
                 <label className="legacy-field" data-editavel="true">
                   <span>Originador</span>
@@ -1726,10 +1939,10 @@ export default function NovoContratoEntradaAnimaisPage() {
                 <label className="legacy-field" data-editavel="true"><span>Animais Mapa</span><input className="legacy-input" value={dadosGerais.animaisMapa} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisMapa: onlyDecimal(event.target.value) }))} /></label>
                 <label className="legacy-field"><span>Peso Mapa (KG)</span><input className="legacy-input" value={dadosGerais.pesoMapaKg} onChange={(event) => setDadosGerais((prev) => ({ ...prev, pesoMapaKg: onlyDecimal(event.target.value) }))} /></label>
                 <label className="legacy-field"><span>Quantidade GTA</span><input className="legacy-input" value={dadosGerais.quantidadeGta} onChange={(event) => setDadosGerais((prev) => ({ ...prev, quantidadeGta: onlyDecimal(event.target.value) }))} /></label>
-                <label className="legacy-field"><span>Animais Mortos</span><input className="legacy-input" value={dadosGerais.animaisMortos} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisMortos: onlyDecimal(event.target.value) }))} /></label>
-                <label className="legacy-field"><span>Animais Lesionados</span><input className="legacy-input" value={dadosGerais.animaisLesionados} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisLesionados: onlyDecimal(event.target.value) }))} /></label>
-                <label className="legacy-field"><span>Animais Chegada</span><input className="legacy-input" value={dadosGerais.animaisChegada} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisChegada: onlyDecimal(event.target.value) }))} /></label>
-                <label className="legacy-field"><span>Peso Chegada (KG)</span><input className="legacy-input" value={dadosGerais.pesoChegadaKg} onChange={(event) => setDadosGerais((prev) => ({ ...prev, pesoChegadaKg: onlyDecimal(event.target.value) }))} /></label>
+                <label className="legacy-field" data-editavel="true"><span>Animais Mortos</span><input className="legacy-input" value={dadosGerais.animaisMortos} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisMortos: onlyDecimal(event.target.value) }))} /></label>
+                <label className="legacy-field" data-editavel="true"><span>Animais Lesionados</span><input className="legacy-input" value={dadosGerais.animaisLesionados} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisLesionados: onlyDecimal(event.target.value) }))} /></label>
+                <label className="legacy-field" data-editavel="true"><span>Animais Chegada</span><input className="legacy-input" value={dadosGerais.animaisChegada} onChange={(event) => setDadosGerais((prev) => ({ ...prev, animaisChegada: onlyDecimal(event.target.value) }))} /></label>
+                <label className="legacy-field" data-editavel="true"><span>Peso Chegada (KG)</span><input className="legacy-input" value={dadosGerais.pesoChegadaKg} onChange={(event) => setDadosGerais((prev) => ({ ...prev, pesoChegadaKg: onlyDecimal(event.target.value) }))} /></label>
                 <label className="legacy-field"><span>Quebra (KG)</span><input className="legacy-input" value={dadosGerais.quebraKg} onChange={(event) => setDadosGerais((prev) => ({ ...prev, quebraKg: onlyDecimal(event.target.value) }))} /></label>
                 <label className="legacy-field"><span>Quebra (@)</span><input className="legacy-input" value={dadosGerais.quebraArroba} onChange={(event) => setDadosGerais((prev) => ({ ...prev, quebraArroba: onlyDecimal(event.target.value) }))} /></label>
                 <label className="legacy-field"><span>Quebra (%)</span><input className="legacy-input" value={dadosGerais.quebraPercentual} onChange={(event) => setDadosGerais((prev) => ({ ...prev, quebraPercentual: onlyDecimal(event.target.value) }))} /></label>
@@ -1943,7 +2156,7 @@ export default function NovoContratoEntradaAnimaisPage() {
       )}
 
       {modalType && (
-        <LegacyModal title={modalType === "clausula_catalogo" ? "Cadastrar Cláusula" : `Adicionar ${modalType === "item" ? "Item" : modalType === "frete" ? "Frete" : modalType === "financeiro" ? "Financeiro" : modalType === "nota" ? "Nota" : modalType === "custo" ? "Custo" : "Mapa"}`} onClose={() => setModalType(null)}>
+        <LegacyModal title={`Adicionar ${modalType === "item" ? "Item" : modalType === "frete" ? "Frete" : modalType === "financeiro" ? "Financeiro" : modalType === "nota" ? "Nota" : modalType === "custo" ? "Custo" : modalType === "clausula" ? "Cláusula" : "Mapa"}`} onClose={() => { setModalType(null); setEditingClausulaIndex(null); }}>
           {modalType === "item" ? (
             <>
               <div className="legacy-grid cols-4">
@@ -2388,7 +2601,7 @@ export default function NovoContratoEntradaAnimaisPage() {
               </div>
               <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => setModalType(null)}>Descartar</button></div>
             </>
-          ) : modalType === "clausula_catalogo" ? (
+          ) : modalType === "clausula" ? (
             <>
               <div className="legacy-grid cols-4">
                 <label className="legacy-field">
@@ -2397,15 +2610,14 @@ export default function NovoContratoEntradaAnimaisPage() {
                     className="legacy-input"
                     value={draft.codigo ?? ""}
                     onChange={(event) => setDraft((prev) => ({ ...prev, codigo: event.target.value }))}
-                    placeholder="Ex.: CLÁUSULA nº 01"
                   />
                 </label>
                 <label className="legacy-field col-span-3">
-                  <span>Título</span>
+                  <span>Referência</span>
                   <input
                     className="legacy-input"
-                    value={draft.titulo ?? ""}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, titulo: event.target.value }))}
+                    value={draft.referencia ?? ""}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, referencia: event.target.value }))}
                   />
                 </label>
                 <label className="legacy-field col-span-4">
@@ -2417,7 +2629,7 @@ export default function NovoContratoEntradaAnimaisPage() {
                   />
                 </label>
               </div>
-              <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => setModalType(null)}>Descartar</button></div>
+              <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => { setModalType(null); setEditingClausulaIndex(null); }}>Descartar</button></div>
             </>
           ) : (
             <>
@@ -2810,28 +3022,30 @@ function ClausulasTab({
   onSelecionar,
   onChangeTitulo,
   onAdicionar,
-  onCadastrarNova,
+  onNova,
+  onEditar,
   onRemove,
 }: {
   catalogo: ClausulaCatalogoItem[];
   clausulaSelecionadaId: string;
   titulo: string;
   rows: Record<string, string>[];
-  onSelecionar: (value: string) => void;
+  onSelecionar: (value: string) => void | Promise<void>;
   onChangeTitulo: (value: string) => void;
-  onAdicionar: () => void;
-  onCadastrarNova: () => void;
+  onAdicionar: () => void | Promise<void>;
+  onNova: () => void;
+  onEditar: (index: number) => void;
   onRemove: (index: number) => void;
 }) {
   return (
     <section className="mt-2">
       <div className="legacy-grid cols-4">
         <label className="legacy-field">
-          <span>Cláusula</span>
+          <span>Modelo de Contrato</span>
           <select
             className="legacy-select"
             value={clausulaSelecionadaId}
-            onChange={(event) => onSelecionar(event.target.value)}
+            onChange={(event) => void onSelecionar(event.target.value)}
           >
             <option value="">Selecione...</option>
             {catalogo.map((item) => (
@@ -2852,8 +3066,8 @@ function ClausulasTab({
       </div>
       <p className="itens-title mt-2">Cláusula contrato</p>
       <div className="legacy-actions mt-2">
-        <button type="button" className="legacy-btn itens-add-btn" onClick={onAdicionar}>Adicionar</button>
-        <button type="button" className="legacy-btn" onClick={onCadastrarNova}>Cadastrar cláusula</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={() => void onAdicionar()}>Aplicar Modelo</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onNova}>Nova Cláusula</button>
       </div>
       <div className="itens-table-wrap mt-2">
         <table className="itens-table">
@@ -2883,6 +3097,7 @@ function ClausulasTab({
                 <td className="left">{row.referencia || "-"}</td>
                 <td className="left">{row.descricao || "-"}</td>
                 <td>
+                  <button type="button" className="legacy-btn mr-1" onClick={() => onEditar(index)}>Editar</button>
                   <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
                 </td>
               </tr>
@@ -2909,7 +3124,7 @@ function TabTable({
       {onAdd && <div className="legacy-actions"><button type="button" className="legacy-btn" onClick={onAdd}>Adicionar</button></div>}
       <div className="legacy-table-wrap mt-2">
         <table className="legacy-table">
-          <thead><tr>{headers.length === 0 ? <th>Registro</th> : headers.map((header) => <th key={header}>{header}</th>)}<th>Ações</th></tr></thead>
+          <thead><tr>{headers.length === 0 ? <th>Registro</th> : headers.map((header) => <th key={header}>{formatTabHeaderLabel(header)}</th>)}<th>Ações</th></tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={headers.length + 1} className="legacy-empty">Nenhum registro adicionado.</td></tr>}
             {rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.length === 0 ? <td>-</td> : headers.map((header) => <td key={header} className={header === "item" || header === "descricao" ? "left" : ""}>{row[header] || "-"}</td>)}<td><button type="button" className="legacy-btn" onClick={() => onRemove(rowIndex)}>Remover</button></td></tr>)}
@@ -2918,6 +3133,49 @@ function TabTable({
       </div>
     </section>
   );
+}
+
+function formatTabHeaderLabel(header: string): string {
+  const labels: Record<string, string> = {
+    numeroMapa: "Número Mapa",
+    dataJejum: "Data Jejum",
+    horaInicioJejum: "Hora Início Jejum",
+    horaFimJejum: "Hora Fim Jejum",
+    dataPesagem: "Data Pesagem",
+    horaInicioPesagem: "Hora Início Pesagem",
+    horaFimPesagem: "Hora Fim Pesagem",
+    qualidade: "Qualidade",
+    placa: "Placa",
+    motorista: "Motorista",
+    rendimentoCarcaca: "Rendimento Carcaça",
+    pesoBrutoKg: "Peso Bruto (KG)",
+    pesoTotalArroba: "Peso Total (@)",
+    pesoMedioArroba: "Peso Médio (@)",
+    quantidadeAnimais: "Quantidade Animais",
+    pesoLiquidoArroba: "Peso Líquido (@)",
+    valorArroba: "Valor (R$/@)",
+    valorTotal: "Valor Total",
+    valorComissao: "Valor Comissão",
+    comprador: "Comprador",
+    responsavel: "Responsável",
+    telefoneResponsavel: "Telefone Responsável",
+    cpfResponsavel: "CPF Responsável",
+    observacao: "Observação",
+    animaisJson: "Animais",
+    dataInicio: "Data Início",
+    quantidade: "Quantidade",
+    pesoTotalKg: "Peso Total (KG)",
+    descricao: "Descrição",
+  };
+
+  if (labels[header]) return labels[header];
+
+  return header
+    .replace(/_/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/, (char) => char.toUpperCase());
 }
 
 function Placeholder({ text }: { text: string }) {
@@ -2995,10 +3253,12 @@ function CatalogAutocompleteField({
   disabled?: boolean;
   loading?: boolean;
 }) {
-  const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
+  const selectedOption = findCatalogOptionByValue(options, value);
+  const selectedLabel = selectedOption?.label ?? "";
   const [text, setText] = useState(selectedLabel);
   const [isFocused, setIsFocused] = useState(false);
-  const inputValue = isFocused ? text : value ? selectedLabel : text;
+  const stableSelectedLabel = selectedLabel || normalizeItemDisplayLabel(value) || text;
+  const inputValue = isFocused ? text : value ? stableSelectedLabel : text;
   const filteredOptions = filterCatalogOptions(options, inputValue, value);
 
   function handleChange(nextText: string) {
@@ -3013,7 +3273,7 @@ function CatalogAutocompleteField({
 
     const exact = options.find((option) => {
       const labelTerm = normalizeSearchTerm(option.label);
-      const valueTerm = normalizeSearchTerm(option.value);
+      const valueTerm = normalizeSearchTerm(stripSapPrefix(option.value));
       return labelTerm === term || valueTerm === term;
     });
 
@@ -3043,8 +3303,8 @@ function CatalogAutocompleteField({
         }}
         onBlur={() => {
           setIsFocused(false);
-          if (value && selectedLabel) {
-            setText(selectedLabel);
+          if (value) {
+            setText(stableSelectedLabel);
           }
         }}
       />
@@ -3120,10 +3380,12 @@ function hydrateItemDraft(draft: ItemDraft, catalog: ItemCatalog): ItemDraft {
 }
 
 function pickExistingOrDefault(value: string, options: CatalogOption[], fallback = ""): string {
-  if (!value) return "";
+  if (!value) {
+    if (fallback) return fallback;
+    return "";
+  }
   if (options.some((option) => option.value === value)) return value;
-  if (fallback) return fallback;
-  return options[0]?.value ?? "";
+  return value;
 }
 
 function preferBrMoeda(options: CatalogOption[]): string {
@@ -3133,7 +3395,36 @@ function preferBrMoeda(options: CatalogOption[]): string {
 
 function optionLabel(options: CatalogOption[], value: string): string {
   if (!value) return "";
-  return options.find((option) => option.value === value)?.label ?? value;
+  return findCatalogOptionByValue(options, value)?.label ?? "";
+}
+
+function optionLabelByItemValue(options: CatalogOption[], value: string): string {
+  if (!value) return "";
+  const exact = options.find((option) => option.value === value);
+  if (exact) return exact.label;
+  const normalizedValue = stripSapPrefix(value).toUpperCase();
+  if (!normalizedValue) return "";
+  const fuzzy = options.find((option) => stripSapPrefix(option.value).toUpperCase() === normalizedValue);
+  return fuzzy?.label ?? "";
+}
+
+function findCatalogOptionByValue(options: CatalogOption[], value: string): CatalogOption | null {
+  if (!value) return null;
+  const exact = options.find((option) => option.value === value);
+  if (exact) return exact;
+  const normalizedValue = stripSapPrefix(value).toUpperCase();
+  if (!normalizedValue) return null;
+  return options.find((option) => stripSapPrefix(option.value).toUpperCase() === normalizedValue) ?? null;
+}
+
+function normalizeItemDisplayLabel(value: string): string {
+  const stripped = stripSapPrefix(value);
+  if (!stripped) return "";
+  return stripped.replace(/\s*-\s*-\s*/g, " - ").trim();
+}
+
+function stripSapPrefix(value: string): string {
+  return String(value ?? "").replace(/^sap:[^:]+:/i, "").trim();
 }
 
 function formatCatalogDisplayLabel(option: CatalogOption): string {
@@ -3162,7 +3453,7 @@ function filterCatalogOptions(options: CatalogOption[], search: string, selected
   });
 
   if (selectedValue && !filtered.some((option) => option.value === selectedValue)) {
-    const selected = options.find((option) => option.value === selectedValue);
+    const selected = findCatalogOptionByValue(options, selectedValue);
     if (selected) return [selected, ...filtered];
   }
 
@@ -3186,6 +3477,40 @@ function sortClausulasCatalogo(items: ClausulaCatalogoItem[]): ClausulaCatalogoI
   });
 }
 
+function sortClausulasRows(rows: Record<string, string>[]): Record<string, string>[] {
+  return [...rows].sort((a, b) => {
+    const codigoA = asText(a.codigo);
+    const codigoB = asText(b.codigo);
+    const numberA = parseLeadingNumber(codigoA);
+    const numberB = parseLeadingNumber(codigoB);
+
+    if (numberA !== null && numberB !== null && numberA !== numberB) return numberA - numberB;
+    if (numberA !== null && numberB === null) return -1;
+    if (numberA === null && numberB !== null) return 1;
+
+    const codigoCmp = normalizeSearchTerm(codigoA).localeCompare(normalizeSearchTerm(codigoB), "pt-BR");
+    if (codigoCmp !== 0) return codigoCmp;
+
+    const refCmp = normalizeSearchTerm(asText(a.referencia)).localeCompare(
+      normalizeSearchTerm(asText(b.referencia)),
+      "pt-BR",
+    );
+    if (refCmp !== 0) return refCmp;
+
+    return normalizeSearchTerm(asText(a.descricao)).localeCompare(
+      normalizeSearchTerm(asText(b.descricao)),
+      "pt-BR",
+    );
+  });
+}
+
+function parseLeadingNumber(value: string): number | null {
+  const match = String(value ?? "").match(/\d+/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[0], 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 function upsertClausulaCatalogo(
   items: ClausulaCatalogoItem[],
   nextItem: ClausulaCatalogoItem,
@@ -3203,10 +3528,18 @@ function mapItemRowFromApi(row: Record<string, unknown>, catalog: ItemCatalog): 
   const centroCustoId = asText(row.centroCustoId) || "";
   const utilizacaoId = asText(row.utilizacaoId) || "";
   const moedaId = asText(row.moedaId) || "";
+  const rawItemLabel = normalizeItemDisplayLabel(asText(row.item));
+  const itemLabelFromCatalog = normalizeItemDisplayLabel(optionLabelByItemValue(catalog.itens, itemId));
+  const itemCode = stripSapPrefix(itemId);
+  const itemLabel =
+    (rawItemLabel && rawItemLabel.toUpperCase() !== itemCode.toUpperCase() ? rawItemLabel : "") ||
+    itemLabelFromCatalog ||
+    rawItemLabel ||
+    itemCode;
 
   return {
     itemId,
-    item: asText(row.item) || optionLabel(catalog.itens, itemId),
+    item: itemLabel,
     undMedidaId,
     undMedida: asText(row.undMedida) || optionLabel(catalog.unidades, undMedidaId),
     valorUnitario: formatCurrencyFromUnknown(row.valorUnitario),
@@ -3278,6 +3611,12 @@ function asObject(value: unknown): Record<string, unknown> {
 function asText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+}
+
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "t" || normalized === "sim";
 }
 
 function asPositiveString(value: unknown): string | null {
@@ -3496,5 +3835,19 @@ function toCustosResumoPayload(custosResumo: CustosResumoForm) {
     valorArrobaProduzida: toOptionalNumber(custosResumo.valorArrobaProduzida) ?? null,
     animaisPrevisto: toOptionalNumber(custosResumo.animaisPrevisto) ?? null,
     descontoVendaArroba: toOptionalNumber(custosResumo.descontoVendaArroba) ?? null,
+  };
+}
+
+function toOutrosPayload(outros: OutrosForm) {
+  return {
+    dataEmbarque: toOptionalString(outros.dataEmbarque) ?? null,
+    dataPrevistaChegada: toOptionalString(outros.dataPrevistaChegada) ?? null,
+    freteConfinamento: toOptionalString(outros.freteConfinamento) ?? null,
+    fazendaDestino: toOptionalString(outros.fazendaDestino) ?? null,
+    fazendaOrigem: toOptionalString(outros.fazendaOrigem) ?? null,
+    descontoAcerto: outros.descontoAcerto,
+    descricaoDesconto: toOptionalString(outros.descricaoDesconto) ?? null,
+    pesoReferencia: toOptionalString(outros.pesoReferencia) ?? null,
+    observacao: toOptionalString(outros.observacao) ?? null,
   };
 }

@@ -16,8 +16,8 @@ export const moduleDefinitions: ModuleDefinition[] = [
     links: [
       { label: "Contrato de Saida de Insumos", href: "/contratos/saida-insumos" },
       { label: "Contrato de Entrada de Animais", href: "/contratos/entrada-animais" },
-      { label: "Contrato de Saida de Animais", href: "#" },
-      { label: "Contrato de Entrada de Insumos", href: "#" },
+      { label: "Contrato de Saida de Animais", href: "/contratos/saida-animais" },
+      { label: "Contrato de Entrada de Insumos", href: "/contratos/entrada-insumos" },
       { label: "Tabela Boitel", href: "#" },
       { label: "Visita", href: "/visitas" },
       { label: "Tabela de Preco", href: "#" },

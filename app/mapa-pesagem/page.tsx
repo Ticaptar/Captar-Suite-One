@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
 import type { ContratoEntradaAnimaisListItem } from "@/lib/types/contrato";
@@ -14,41 +14,133 @@ type ListaResponse = {
 };
 
 type ContratoDetalheResponse = {
-  contrato: {
+  contrato?: {
     id: number;
     numero?: string | null;
     descricao?: string | null;
     parceiro_nome_base?: string | null;
-    dadosGerais?: {
+    dadosGerais?: (Record<string, unknown> & {
       animaisMapa?: number | null;
       pesoMapaKg?: number | null;
-    };
+      animaisChegada?: number | null;
+      pesoChegadaKg?: number | null;
+      animaisMortos?: number | null;
+      animaisLesionados?: number | null;
+    }) | null;
   };
   mapas?: Record<string, string>[];
 };
 
-type MapaLinha = {
+type AnimalLinha = {
   idLocal: string;
-  dataInicio: string;
+  ordem: string;
+  quantidadeAnimal: string;
+  pesoMedioKg: string;
+  pesoVivoKg: string;
+};
+
+type MapaDraft = {
+  numeroMapa: string;
+  dataJejum: string;
+  horaInicioJejum: string;
+  horaFimJejum: string;
+  dataPesagem: string;
+  horaInicioPesagem: string;
+  horaFimPesagem: string;
+  qualidade: string;
   placa: string;
   motorista: string;
-  quantidade: string;
-  pesoTotalKg: string;
+  rendimentoCarcaca: string;
+  pesoBrutoKg: string;
+  pesoTotalArroba: string;
+  pesoMedioArroba: string;
+  quantidadeAnimais: string;
+  pesoLiquidoArroba: string;
+  valorArroba: string;
+  valorTotal: string;
+  valorComissao: string;
+  comprador: string;
+  responsavel: string;
+  telefoneResponsavel: string;
+  cpfResponsavel: string;
   observacao: string;
 };
 
-type MapaDraft = Omit<MapaLinha, "idLocal">;
+type FieldDef = {
+  key: keyof MapaDraft;
+  label: string;
+  type?: "text" | "date" | "time";
+  span?: number;
+  decimal?: boolean;
+  calculated?: boolean;
+  options?: string[];
+};
 
-const EMPTY_DRAFT: MapaDraft = {
-  dataInicio: "",
+const EMPTY_MAPA: MapaDraft = {
+  numeroMapa: "",
+  dataJejum: "",
+  horaInicioJejum: "",
+  horaFimJejum: "",
+  dataPesagem: "",
+  horaInicioPesagem: "",
+  horaFimPesagem: "",
+  qualidade: "",
   placa: "",
   motorista: "",
-  quantidade: "",
-  pesoTotalKg: "",
+  rendimentoCarcaca: "",
+  pesoBrutoKg: "",
+  pesoTotalArroba: "",
+  pesoMedioArroba: "",
+  quantidadeAnimais: "",
+  pesoLiquidoArroba: "",
+  valorArroba: "",
+  valorTotal: "",
+  valorComissao: "",
+  comprador: "",
+  responsavel: "",
+  telefoneResponsavel: "",
+  cpfResponsavel: "",
   observacao: "",
 };
 
+const EMPTY_ANIMAL: Omit<AnimalLinha, "idLocal"> = {
+  ordem: "",
+  quantidadeAnimal: "",
+  pesoMedioKg: "",
+  pesoVivoKg: "",
+};
+
+const QUALIDADES = ["MERCADO INTERNO", "EXPORTACAO", "MESTICO", "NELORE", "CRUZADO"];
+
+const MAPA_FIELDS: FieldDef[] = [
+  { key: "numeroMapa", label: "Numero Mapa" },
+  { key: "dataJejum", label: "Data Jejum", type: "date" },
+  { key: "horaInicioJejum", label: "Hora Inicio Jejum", type: "time" },
+  { key: "horaFimJejum", label: "Hora Fim Jejum", type: "time" },
+  { key: "dataPesagem", label: "Data Pesagem", type: "date" },
+  { key: "horaInicioPesagem", label: "Hora Inicio Pesagem", type: "time" },
+  { key: "horaFimPesagem", label: "Hora Fim Pesagem", type: "time" },
+  { key: "qualidade", label: "Qualidade", options: QUALIDADES },
+  { key: "placa", label: "Placa" },
+  { key: "motorista", label: "Motorista" },
+  { key: "rendimentoCarcaca", label: "Rendimento Carcaca", decimal: true },
+  { key: "pesoBrutoKg", label: "Peso Bruto(KG)", decimal: true },
+  { key: "pesoTotalArroba", label: "Peso Total(@)", decimal: true, calculated: true },
+  { key: "pesoMedioArroba", label: "Peso Medio(@)", decimal: true, calculated: true },
+  { key: "quantidadeAnimais", label: "Quantidade Animais", decimal: true },
+  { key: "pesoLiquidoArroba", label: "Peso Liquido(@)", decimal: true, calculated: true },
+  { key: "valorArroba", label: "Valor (R$/@)", decimal: true },
+  { key: "valorTotal", label: "Valor Total", decimal: true, calculated: true },
+  { key: "valorComissao", label: "Valor Comissao", decimal: true },
+  { key: "comprador", label: "Comprador" },
+  { key: "responsavel", label: "Responsavel" },
+  { key: "telefoneResponsavel", label: "Telefone Responsavel" },
+  { key: "cpfResponsavel", label: "CPF Responsavel" },
+  { key: "observacao", label: "Observacao", span: 2 },
+];
+
 export default function MapaPesagemPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const contratoIdFromQuery = useMemo(() => {
     const raw = searchParams.get("contratoId");
@@ -56,56 +148,79 @@ export default function MapaPesagemPage() {
     const parsed = Number.parseInt(raw, 10);
     return Number.isNaN(parsed) || parsed <= 0 ? "" : String(parsed);
   }, [searchParams]);
+
   const [contratos, setContratos] = useState<ContratoEntradaAnimaisListItem[]>([]);
   const [selectedContratoId, setSelectedContratoId] = useState("");
   const [loadingContratos, setLoadingContratos] = useState(true);
   const [loadingDetalhe, setLoadingDetalhe] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-
-  const [mapas, setMapas] = useState<MapaLinha[]>([]);
-  const [draft, setDraft] = useState<MapaDraft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [resumoContrato, setResumoContrato] = useState<ContratoDetalheResponse["contrato"] | null>(null);
+  const [mapasSalvosContrato, setMapasSalvosContrato] = useState<Record<string, string>[]>([]);
+  const [novoMapa, setNovoMapa] = useState(false);
+
+  const [mapaDraft, setMapaDraft] = useState<MapaDraft>(EMPTY_MAPA);
+  const [animalLinhas, setAnimalLinhas] = useState<AnimalLinha[]>([]);
+  const [animalModalOpen, setAnimalModalOpen] = useState(false);
+  const [animalDraft, setAnimalDraft] = useState(EMPTY_ANIMAL);
+  const [animalEditId, setAnimalEditId] = useState<string | null>(null);
+
+  const [online, setOnline] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [online, setOnline] = useState(true);
-  const [resumoContrato, setResumoContrato] = useState<ContratoDetalheResponse["contrato"] | null>(null);
 
   useEffect(() => {
-    if (!contratoIdFromQuery) return;
-    setSelectedContratoId(contratoIdFromQuery);
+    if (contratoIdFromQuery) setSelectedContratoId(contratoIdFromQuery);
   }, [contratoIdFromQuery]);
 
   useEffect(() => {
     setOnline(window.navigator.onLine);
-    function handleOnline() {
-      setOnline(true);
-    }
-    function handleOffline() {
-      setOnline(false);
-    }
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
+    const onOnline = () => setOnline(true);
+    const onOffline = () => setOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
     return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
     };
   }, []);
+  const contratosFiltrados = useMemo(() => {
+    const term = normalizeSearch(searchTerm);
+    if (!term) return contratos;
+    return contratos.filter((item) => {
+      return (
+        normalizeSearch(item.referenciaContrato).includes(term) ||
+        normalizeSearch(item.numero).includes(term) ||
+        normalizeSearch(item.parceiro ?? "").includes(term) ||
+        String(item.id).includes(term)
+      );
+    });
+  }, [contratos, searchTerm]);
+
+  const totaisAnimais = useMemo(() => {
+    return animalLinhas.reduce(
+      (acc, row) => {
+        acc.qtd += parseDecimal(row.quantidadeAnimal);
+        acc.peso += parseDecimal(row.pesoVivoKg);
+        return acc;
+      },
+      { qtd: 0, peso: 0 },
+    );
+  }, [animalLinhas]);
 
   const loadContratos = useCallback(async () => {
     setLoadingContratos(true);
     setError("");
     try {
-      const response = await fetch("/api/contratos/entrada-animais?page=1&pageSize=100", {
-        cache: "no-store",
-      });
+      const response = await fetch("/api/contratos/entrada-animais?page=1&pageSize=500", { cache: "no-store" });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? "Falha ao carregar contratos.");
       }
       const data = (await response.json()) as ListaResponse;
       setContratos(data.items);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Falha ao carregar contratos.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao carregar contratos.");
       setContratos([]);
     } finally {
       setLoadingContratos(false);
@@ -118,40 +233,52 @@ export default function MapaPesagemPage() {
 
   const loadContratoDetalhe = useCallback(async () => {
     if (!selectedContratoId) {
-      setMapas([]);
       setResumoContrato(null);
+      setMapaDraft(EMPTY_MAPA);
+      setAnimalLinhas([]);
+      setMapasSalvosContrato([]);
+      setNovoMapa(false);
       return;
     }
 
     setLoadingDetalhe(true);
     setError("");
     setMessage("");
+
     try {
-      const response = await fetch(`/api/contratos/entrada-animais/${selectedContratoId}`, {
-        cache: "no-store",
-      });
+      const response = await fetch(`/api/contratos/entrada-animais/${selectedContratoId}`, { cache: "no-store" });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Falha ao carregar mapa do contrato.");
+        throw new Error(body?.error ?? "Falha ao carregar dados do contrato.");
       }
 
       const data = (await response.json()) as ContratoDetalheResponse;
-      setResumoContrato(data.contrato ?? null);
-      setMapas(
-        (data.mapas ?? []).map((row, index) => ({
-          idLocal: `${Date.now()}-${index}`,
-          dataInicio: row.dataInicio ?? row.dtInicio ?? row.dt_inicio ?? "",
-          placa: row.placa ?? "",
-          motorista: row.motorista ?? "",
-          quantidade: row.quantidade ?? row.qt ?? "",
-          pesoTotalKg: row.pesoTotalKg ?? row.pesoKg ?? row.peso_mapa_kg ?? "",
-          observacao: row.observacao ?? row.descricao ?? "",
-        })),
-      );
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Falha ao carregar dados do contrato.");
-      setMapas([]);
+      const contrato = data.contrato ?? null;
+      const mapas = data.mapas ?? [];
+      setResumoContrato(contrato);
+      setMapasSalvosContrato(mapas);
+      setNovoMapa(false);
+
+      if (mapas.length > 0) {
+        const parsed = parseMapaPayload(mapas[mapas.length - 1]);
+        setMapaDraft({ ...parsed.draft, comprador: parsed.draft.comprador || contrato?.parceiro_nome_base || "" });
+        setAnimalLinhas(parsed.animais);
+      } else {
+        setMapaDraft({
+          ...EMPTY_MAPA,
+          comprador: contrato?.parceiro_nome_base ?? "",
+          quantidadeAnimais: toDecimalString(contrato?.dadosGerais?.animaisMapa),
+          pesoBrutoKg: toDecimalString(contrato?.dadosGerais?.pesoMapaKg),
+        });
+        setAnimalLinhas([]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao carregar dados do contrato.");
       setResumoContrato(null);
+      setMapaDraft(EMPTY_MAPA);
+      setAnimalLinhas([]);
+      setMapasSalvosContrato([]);
+      setNovoMapa(false);
     } finally {
       setLoadingDetalhe(false);
     }
@@ -161,107 +288,245 @@ export default function MapaPesagemPage() {
     loadContratoDetalhe().catch(() => undefined);
   }, [loadContratoDetalhe]);
 
-  const contratosFiltrados = useMemo(() => {
-    const normalized = normalizeSearch(searchTerm);
-    if (!normalized) return contratos;
-    return contratos.filter((item) => {
-      return (
-        normalizeSearch(item.referenciaContrato).includes(normalized) ||
-        normalizeSearch(item.numero).includes(normalized) ||
-        normalizeSearch(item.parceiro ?? "").includes(normalized) ||
-        String(item.id).includes(normalized)
-      );
+  function onChangeField(field: FieldDef, value: string) {
+    if (field.calculated) return;
+    if (animalLinhas.length > 0 && (field.key === "quantidadeAnimais" || field.key === "pesoBrutoKg")) return;
+    setMapaDraft((prev) => ({ ...prev, [field.key]: field.decimal ? sanitizeDecimal(value) : value }));
+  }
+
+  useEffect(() => {
+    if (animalLinhas.length === 0) return;
+    const quantidadeAnimais = animalLinhas.reduce((acc, row) => acc + parseDecimal(row.quantidadeAnimal), 0);
+    const pesoBrutoKg = animalLinhas.reduce((acc, row) => acc + parseDecimal(row.pesoVivoKg), 0);
+    const quantidadeFormatada = formatDecimalInput(quantidadeAnimais);
+    const pesoBrutoFormatado = formatDecimalInput(pesoBrutoKg);
+
+    setMapaDraft((prev) => {
+      if (prev.quantidadeAnimais === quantidadeFormatada && prev.pesoBrutoKg === pesoBrutoFormatado) {
+        return prev;
+      }
+      return {
+        ...prev,
+        quantidadeAnimais: quantidadeFormatada,
+        pesoBrutoKg: pesoBrutoFormatado,
+      };
     });
-  }, [contratos, searchTerm]);
+  }, [animalLinhas]);
 
-  const totais = useMemo(() => {
-    return mapas.reduce(
-      (acc, row) => {
-        acc.animais += parseDecimalBr(row.quantidade);
-        acc.pesoKg += parseDecimalBr(row.pesoTotalKg);
-        return acc;
-      },
-      { animais: 0, pesoKg: 0 },
-    );
-  }, [mapas]);
+  useEffect(() => {
+    const pesoBrutoKg = parseDecimal(mapaDraft.pesoBrutoKg);
+    const quantidadeAnimais = parseDecimal(mapaDraft.quantidadeAnimais);
+    const valorArroba = parseDecimal(mapaDraft.valorArroba);
 
-  function addMapa() {
-    if (!draft.dataInicio || !draft.quantidade) {
-      setError("Informe data e quantidade para adicionar o mapa.");
+    const pesoTotalArroba = pesoBrutoKg > 0 ? pesoBrutoKg / 15 : 0;
+    const pesoMedioArroba = quantidadeAnimais > 0 ? pesoTotalArroba / quantidadeAnimais : 0;
+    // Peso liquido segue o mapa de animais (sem aplicar rendimento de carcaca).
+    const pesoLiquidoArroba = pesoTotalArroba;
+    const valorTotal = pesoLiquidoArroba * valorArroba;
+
+    const proximoPesoTotal = formatDecimalInput(pesoTotalArroba);
+    const proximoPesoMedio = formatDecimalInput(pesoMedioArroba);
+    const proximoPesoLiquido = formatDecimalInput(pesoLiquidoArroba);
+    const proximoValorTotal = formatDecimalInput(valorTotal);
+
+    setMapaDraft((prev) => {
+      if (
+        prev.pesoTotalArroba === proximoPesoTotal &&
+        prev.pesoMedioArroba === proximoPesoMedio &&
+        prev.pesoLiquidoArroba === proximoPesoLiquido &&
+        prev.valorTotal === proximoValorTotal
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        pesoTotalArroba: proximoPesoTotal,
+        pesoMedioArroba: proximoPesoMedio,
+        pesoLiquidoArroba: proximoPesoLiquido,
+        valorTotal: proximoValorTotal,
+      };
+    });
+  }, [
+    // Mantemos 4 dependencias fixas para evitar erro de tamanho no Fast Refresh.
+    mapaDraft.pesoBrutoKg,
+    mapaDraft.quantidadeAnimais,
+    mapaDraft.rendimentoCarcaca,
+    mapaDraft.valorArroba,
+  ]);
+
+  function openAddAnimal() {
+    setAnimalEditId(null);
+    setAnimalDraft(EMPTY_ANIMAL);
+    setAnimalModalOpen(true);
+  }
+
+  function openEditAnimal(idLocal: string) {
+    const row = animalLinhas.find((item) => item.idLocal === idLocal);
+    if (!row) return;
+    setAnimalEditId(idLocal);
+    setAnimalDraft({
+      ordem: row.ordem,
+      quantidadeAnimal: row.quantidadeAnimal,
+      pesoMedioKg: row.pesoMedioKg,
+      pesoVivoKg: row.pesoVivoKg,
+    });
+    setAnimalModalOpen(true);
+  }
+
+  function saveAnimal() {
+    if (!animalDraft.quantidadeAnimal) {
+      setError("Informe a quantidade de animal para salvar a linha.");
       return;
     }
     setError("");
-    setMessage("");
-    setMapas((prev) => [
-      ...prev,
-      {
-        ...draft,
-        idLocal: `mapa-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      },
-    ]);
-    setDraft(EMPTY_DRAFT);
+
+    if (animalEditId) {
+      setAnimalLinhas((prev) => prev.map((row) => (row.idLocal === animalEditId ? { ...row, ...animalDraft } : row)));
+    } else {
+      setAnimalLinhas((prev) => [
+        ...prev,
+        {
+          idLocal: `animal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          ...animalDraft,
+        },
+      ]);
+    }
+
+    setAnimalEditId(null);
+    setAnimalDraft(EMPTY_ANIMAL);
+    setAnimalModalOpen(false);
   }
 
-  function removeMapa(idLocal: string) {
-    setMapas((prev) => prev.filter((row) => row.idLocal !== idLocal));
-  }
+  useEffect(() => {
+    if (!animalModalOpen) return;
+    const quantidade = parseDecimal(animalDraft.quantidadeAnimal);
+    const pesoMedio = parseDecimal(animalDraft.pesoMedioKg);
+    const pesoVivoCalculado = formatDecimalInput(quantidade * pesoMedio);
+    if (pesoVivoCalculado !== animalDraft.pesoVivoKg) {
+      setAnimalDraft((prev) => ({ ...prev, pesoVivoKg: pesoVivoCalculado }));
+    }
+  }, [animalDraft.pesoMedioKg, animalDraft.pesoVivoKg, animalDraft.quantidadeAnimal, animalModalOpen]);
 
-  function iniciarNovoMapa() {
+  function novoMapaLocal() {
     if (!selectedContratoId) {
-      setError("Selecione um contrato.");
+      setError("Selecione um contrato primeiro.");
       return;
     }
+    setMapaDraft({ ...EMPTY_MAPA, comprador: resumoContrato?.parceiro_nome_base ?? "" });
+    setAnimalLinhas([]);
+    setNovoMapa(true);
     setError("");
-    setMessage("Novo mapa iniciado. Adicione as linhas e salve.");
-    setDraft(EMPTY_DRAFT);
-    setMapas([]);
+    setMessage("Novo mapa iniciado.");
   }
 
-  async function salvarMapas() {
+  async function salvarNoContrato() {
     if (!selectedContratoId) {
-      setError("Selecione um contrato.");
+      setError("Selecione um contrato para salvar.");
       return;
     }
     if (!online) {
-      setError("Sem conexão no momento. Reconecte para salvar.");
+      setError("Sem conexao no momento.");
+      return;
+    }
+    if (!mapaDraft.dataPesagem) {
+      setError("Informe a data da pesagem.");
       return;
     }
 
     setSaving(true);
     setError("");
     setMessage("");
+
     try {
-      const payloadMapas = mapas.map((row) => ({
-        dataInicio: row.dataInicio,
-        quantidade: toDecimalString(parseDecimalBr(row.quantidade)),
-        placa: row.placa,
-        motorista: row.motorista,
-        pesoTotalKg: toDecimalString(parseDecimalBr(row.pesoTotalKg)),
-        observacao: row.observacao,
-        descricao: row.placa || row.motorista ? `${row.placa} ${row.motorista}`.trim() : "Mapa de pesagem",
-      }));
+      const novoPayload = serializeMapaPayload(mapaDraft, animalLinhas);
+      const numeroMapa = normalizeText(mapaDraft.numeroMapa);
+      const base = [...mapasSalvosContrato];
+      let mapas: Record<string, string>[];
+
+      if (novoMapa || base.length === 0) {
+        mapas = [...base, novoPayload];
+      } else {
+        const index = numeroMapa ? base.findIndex((row) => normalizeText(row.numeroMapa) === numeroMapa) : -1;
+        if (index >= 0) {
+          mapas = base.map((row, rowIndex) => (rowIndex === index ? novoPayload : row));
+        } else {
+          mapas = base.map((row, rowIndex) => (rowIndex === base.length - 1 ? novoPayload : row));
+        }
+      }
+
+      const totaisMapas = buildMapasTotals(mapas);
+      const quantidadeAnimais =
+        totaisMapas.quantidadeAnimais > 0
+          ? totaisMapas.quantidadeAnimais
+          : parseDecimal(mapaDraft.quantidadeAnimais || String(totaisAnimais.qtd));
+      const pesoMapaKg =
+        totaisMapas.pesoMapaKg > 0 ? totaisMapas.pesoMapaKg : parseDecimal(mapaDraft.pesoBrutoKg || String(totaisAnimais.peso));
+      const pesoTotalArroba =
+        totaisMapas.pesoTotalArroba > 0 ? totaisMapas.pesoTotalArroba : parseDecimal(mapaDraft.pesoTotalArroba);
+      const pesoMedioArroba =
+        quantidadeAnimais > 0
+          ? pesoTotalArroba / quantidadeAnimais
+          : totaisMapas.pesoMedioArroba > 0
+            ? totaisMapas.pesoMedioArroba
+            : parseDecimal(mapaDraft.pesoMedioArroba);
+      const pesoLiquidoArroba =
+        totaisMapas.pesoLiquidoArroba > 0 ? totaisMapas.pesoLiquidoArroba : parseDecimal(mapaDraft.pesoLiquidoArroba);
+      const rendimentoCarcaca =
+        totaisMapas.rendimentoCarcaca > 0 ? totaisMapas.rendimentoCarcaca : parseDecimal(mapaDraft.rendimentoCarcaca);
+      const pesoBrutoCabeca = quantidadeAnimais > 0 ? pesoMapaKg / quantidadeAnimais : 0;
+      const pesoConsideradoArroba = pesoLiquidoArroba > 0 ? pesoLiquidoArroba : pesoTotalArroba;
+      const pesoConsideradoKg = pesoConsideradoArroba > 0 ? pesoConsideradoArroba * 15 : pesoMapaKg;
+      // Regra: esses campos devem refletir o(s) mapa(s), sem reusar valor legado já salvo no contrato.
+      const animaisChegada = quantidadeAnimais;
+      const pesoLiquidoKg = pesoLiquidoArroba > 0 ? pesoLiquidoArroba * 15 : pesoMapaKg;
+      const pesoChegadaKg = pesoLiquidoKg > 0 ? pesoLiquidoKg : pesoMapaKg;
+      const quebraKg = Math.max(pesoMapaKg - pesoChegadaKg, 0);
+      const quebraArroba = quebraKg / 15;
+      const quebraPercentual = pesoMapaKg > 0 ? (quebraKg / pesoMapaKg) * 100 : 0;
+      const animaisMortos = Math.max(quantidadeAnimais - animaisChegada, 0);
+      const animaisLesionados = 0;
 
       const response = await fetch(`/api/contratos/entrada-animais/${selectedContratoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mapas: payloadMapas,
+          mapas,
           dadosGerais: {
-            animaisMapa: totais.animais,
-            pesoMapaKg: totais.pesoKg,
+            ...(resumoContrato?.dadosGerais ?? {}),
+            quantidadeNegociada: quantidadeAnimais,
+            animaisMapa: quantidadeAnimais,
+            pesoMapaKg,
+            quantidadeGta: quantidadeAnimais,
+            animaisChegada,
+            pesoChegadaKg,
+            quebraKg,
+            quebraArroba,
+            quebraPercentual,
+            animaisDesembarcados: animaisChegada,
+            animaisProcessado: quantidadeAnimais,
+            animaisMortos,
+            animaisLesionados,
+            pesoBrutoCabeca,
+            rcEntrada: rendimentoCarcaca,
+            pesoConsideradoArroba,
+            pesoConsideradoKg,
+            pesoMedioAbate: pesoMedioArroba,
           },
         }),
       });
 
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Falha ao salvar mapas.");
+        throw new Error(body?.error ?? "Falha ao salvar mapa no contrato.");
       }
 
-      setMessage("Mapa de pesagem salvo com sucesso.");
-      await loadContratoDetalhe();
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Falha ao salvar mapas.");
+      setMessage("Mapa salvo com sucesso. Redirecionando...");
+      setTimeout(() => {
+        router.push("/contratos/entrada-animais");
+      }, 900);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao salvar mapa no contrato.");
     } finally {
       setSaving(false);
     }
@@ -272,185 +537,204 @@ export default function MapaPesagemPage() {
       <main className="w-full space-y-2">
         <FormPageHeader
           title="Mapa de Pesagem"
-          subtitle="Cadastro responsivo para embarque, vinculado ao contrato de entrada de animais."
+          subtitle="Cadastro vinculado ao contrato de entrada de animais."
           backHref="/contratos/entrada-animais"
           backLabel="Contratos"
         />
         <ModuleHeader />
 
         <section className="card p-3 mapa-pesagem-card">
-          <div className="legacy-toolbar">
+          <div className="legacy-toolbar compact-toolbar">
             <div className="legacy-toolbar-left">
-              <h1 className="legacy-title">Mapa de Pesagem</h1>
-              <p className="status-detail">
-                Selecione o contrato e preencha os mapas do embarque.
-              </p>
+              <div className="legacy-actions">
+                <button type="button" className="legacy-btn" onClick={() => loadContratos()} disabled={loadingContratos}>
+                  {loadingContratos ? "Atualizando..." : "Atualizar Contratos"}
+                </button>
+              </div>
             </div>
             <div className="legacy-toolbar-right mapa-pesagem-toolbar-right">
               <input
-                className="legacy-input"
-                placeholder="Buscar contrato por id, numero, parceiro..."
+                className="legacy-input search"
+                placeholder="Pesquisar contrato..."
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
-              <select
-                className="legacy-select"
-                value={selectedContratoId}
-                onChange={(event) => setSelectedContratoId(event.target.value)}
-                disabled={loadingContratos}
-              >
-                <option value="">Selecione o contrato</option>
-                {contratosFiltrados.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    #{item.id} | {item.numero || "s/n"} | {item.parceiro ?? "Sem parceiro"}
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 
-          {!online && <p className="legacy-message error">Modo offline ativo. O salvamento exige conexão.</p>}
+          {!online && <p className="legacy-message error">Modo offline ativo. O salvamento exige conexao.</p>}
           {error && <p className="legacy-message error">{error}</p>}
           {message && <p className="legacy-message success">{message}</p>}
 
-          {selectedContratoId && (
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <article className="card p-3 md:col-span-2">
-                <p className="status-label">Contrato</p>
-                <p className="status-title">{resumoContrato?.descricao ?? "-"}</p>
+          {resumoContrato && (
+            <div className="mt-2 grid gap-2 md:grid-cols-3">
+              <article className="card p-2 md:col-span-2">
+                <p className="status-label">Contrato selecionado</p>
+                <p className="status-title">{resumoContrato.descricao ?? "-"}</p>
                 <p className="status-detail">
-                  Numero: {resumoContrato?.numero ?? "-"} | Parceiro: {resumoContrato?.parceiro_nome_base ?? "-"}
+                  Numero: {resumoContrato.numero ?? "-"} | Parceiro: {resumoContrato.parceiro_nome_base ?? "-"}
                 </p>
               </article>
-              <article className="card p-3">
-                <p className="status-label">Resumo do Mapa</p>
-                <p className="status-title">{toNumberBr(totais.animais)} animais</p>
-                <p className="status-detail">{toNumberBr(totais.pesoKg)} kg</p>
+              <article className="card p-2">
+                <p className="status-label">Resumo animais</p>
+                <p className="status-title">{totaisAnimais.qtd.toLocaleString("pt-BR")} cabecas</p>
+                <p className="status-detail">{totaisAnimais.peso.toLocaleString("pt-BR")} kg</p>
               </article>
             </div>
           )}
 
-          {selectedContratoId && (
-            <div className="legacy-form mt-3 mapa-pesagem-form">
-              <div className="legacy-grid cols-4">
-                <label className="legacy-field">
-                  <span>Data Pesagem</span>
-                  <input
-                    type="date"
-                    className="legacy-input"
-                    value={draft.dataInicio}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, dataInicio: event.target.value }))}
-                  />
-                </label>
-                <label className="legacy-field">
-                  <span>Placa</span>
-                  <input
-                    className="legacy-input"
-                    value={draft.placa}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, placa: event.target.value.toUpperCase() }))}
-                  />
-                </label>
-                <label className="legacy-field">
-                  <span>Motorista</span>
-                  <input
-                    className="legacy-input"
-                    value={draft.motorista}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, motorista: event.target.value }))}
-                  />
-                </label>
-                <label className="legacy-field">
-                  <span>Quantidade de Animais</span>
-                  <input
-                    className="legacy-input"
-                    value={draft.quantidade}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, quantidade: onlyDecimal(event.target.value) }))}
-                  />
-                </label>
-                <label className="legacy-field">
-                  <span>Peso Total (kg)</span>
-                  <input
-                    className="legacy-input"
-                    value={draft.pesoTotalKg}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, pesoTotalKg: onlyDecimal(event.target.value) }))}
-                  />
-                </label>
-                <label className="legacy-field col-span-3">
-                  <span>Observacao</span>
-                  <input
-                    className="legacy-input"
-                    value={draft.observacao}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, observacao: event.target.value }))}
-                  />
-                </label>
-              </div>
-              <div className="legacy-actions mt-3 mapa-pesagem-actions">
-                <button type="button" className="legacy-btn" onClick={addMapa}>
-                  Adicionar Linha
-                </button>
-                <button type="button" className="legacy-btn" onClick={iniciarNovoMapa}>
-                  Novo Mapa
-                </button>
-                <button
-                  type="button"
-                  className="legacy-btn primary"
-                  onClick={salvarMapas}
-                  disabled={saving || loadingDetalhe || !selectedContratoId}
+          <div className="legacy-form mt-2">
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field col-span-2">
+                <span>Contrato</span>
+                <select
+                  className="legacy-select"
+                  value={selectedContratoId}
+                  onChange={(event) => setSelectedContratoId(event.target.value)}
+                  disabled={loadingContratos}
                 >
-                  {saving ? "Salvando..." : "Salvar no Contrato"}
-                </button>
-              </div>
-            </div>
-          )}
+                  <option value="">Selecione...</option>
+                  {contratosFiltrados.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      #{item.id} | {item.numero || "S/N"} | {item.parceiro ?? "SEM PARCEIRO"}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          <div className="itens-table-wrap mt-3 mapa-pesagem-table-wrap">
+              {MAPA_FIELDS.map((field) => {
+                const className = field.span ? `legacy-field col-span-${field.span}` : "legacy-field";
+                const isAutoFromAnimal =
+                  animalLinhas.length > 0 && (field.key === "quantidadeAnimais" || field.key === "pesoBrutoKg");
+                const fieldDisabled = !selectedContratoId || loadingDetalhe || Boolean(field.calculated) || isAutoFromAnimal;
+                if (field.options) {
+                  return (
+                    <label key={field.key} className={className}>
+                      <span>{field.label}</span>
+                      <select
+                        className="legacy-select"
+                        value={mapaDraft[field.key]}
+                        onChange={(event) => onChangeField(field, event.target.value)}
+                        disabled={fieldDisabled}
+                      >
+                        <option value="">Selecione...</option>
+                        {field.options.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                }
+
+                if (field.key === "observacao") {
+                  return (
+                    <label key={field.key} className={className}>
+                      <span>{field.label}</span>
+                      <textarea
+                        className="legacy-textarea"
+                        value={mapaDraft[field.key]}
+                        onChange={(event) => onChangeField(field, event.target.value)}
+                        disabled={fieldDisabled}
+                      />
+                    </label>
+                  );
+                }
+
+                return (
+                  <label key={field.key} className={className}>
+                    <span>{field.label}</span>
+                    <input
+                      type={field.type ?? "text"}
+                      className="legacy-input"
+                      value={mapaDraft[field.key]}
+                      onChange={(event) => onChangeField(field, event.target.value)}
+                      disabled={fieldDisabled}
+                      readOnly={Boolean(field.calculated) || isAutoFromAnimal}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="legacy-actions mt-3 mapa-pesagem-actions">
+              <button type="button" className="legacy-btn" onClick={novoMapaLocal} disabled={!selectedContratoId || loadingDetalhe}>
+                Novo Mapa
+              </button>
+              <button
+                type="button"
+                className="legacy-btn primary"
+                onClick={salvarNoContrato}
+                disabled={!selectedContratoId || loadingDetalhe || saving}
+              >
+                {saving ? "Salvando..." : "Salvar no Contrato"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <p className="itens-title">Animal</p>
+            <div className="legacy-actions mt-1">
+              <button type="button" className="legacy-btn itens-add-btn" onClick={openAddAnimal} disabled={!selectedContratoId || loadingDetalhe}>
+                Adicionar
+              </button>
+            </div>
+          </div>
+
+          <div className="itens-table-wrap mt-2 mapa-pesagem-table-wrap">
             <table className="itens-table mapa-pesagem-table">
               <thead>
                 <tr>
-                  <th>Data</th>
-                  <th>Placa</th>
-                  <th>Motorista</th>
-                  <th>Qtd Animais</th>
-                  <th>Peso (kg)</th>
-                  <th>Observacao</th>
+                  <th>Ordem</th>
+                  <th>Quantidade Animal</th>
+                  <th>Peso Vivo(KG)</th>
+                  <th>Peso Medio(KG)</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody>
-                {(loadingContratos || loadingDetalhe) && (
+                {loadingDetalhe && (
                   <tr>
-                    <td colSpan={7} className="itens-empty" data-label="">
-                      Carregando...
+                    <td colSpan={5} className="itens-empty" data-label="">
+                      Carregando linhas do mapa...
                     </td>
                   </tr>
                 )}
-                {!loadingContratos && !loadingDetalhe && !selectedContratoId && (
+                {!loadingDetalhe && !selectedContratoId && (
                   <tr>
-                    <td colSpan={7} className="itens-empty" data-label="">
-                      Selecione um contrato para iniciar o mapa de pesagem.
+                    <td colSpan={5} className="itens-empty" data-label="">
+                      Selecione um contrato para iniciar o mapa.
                     </td>
                   </tr>
                 )}
-                {!loadingContratos && !loadingDetalhe && Boolean(selectedContratoId) && mapas.length === 0 && (
+                {!loadingDetalhe && selectedContratoId && animalLinhas.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="itens-empty" data-label="">
-                      Nenhum mapa cadastrado.
+                    <td colSpan={5} className="itens-empty" data-label="">
+                      Nenhuma linha adicionada.
                     </td>
                   </tr>
                 )}
-                {!loadingContratos &&
-                  !loadingDetalhe &&
-                  mapas.map((row) => (
+                {!loadingDetalhe &&
+                  animalLinhas.map((row) => (
                     <tr key={row.idLocal}>
-                      <td data-label="Data">{toDateLabel(row.dataInicio)}</td>
-                      <td data-label="Placa">{row.placa || "-"}</td>
-                      <td className="left" data-label="Motorista">{row.motorista || "-"}</td>
-                      <td data-label="Qtd Animais">{row.quantidade || "0"}</td>
-                      <td data-label="Peso (kg)">{row.pesoTotalKg || "0"}</td>
-                      <td className="left" data-label="Observação">{row.observacao || "-"}</td>
-                      <td className="action-cell" data-label="Ações">
-                        <button type="button" className="legacy-btn" onClick={() => removeMapa(row.idLocal)}>
-                          Remover
-                        </button>
+                      <td data-label="Ordem">{row.ordem || "-"}</td>
+                      <td data-label="Quantidade Animal">{row.quantidadeAnimal || "0"}</td>
+                      <td data-label="Peso Vivo(KG)">{row.pesoVivoKg || "0"}</td>
+                      <td data-label="Peso Medio(KG)">{row.pesoMedioKg || "0"}</td>
+                      <td className="action-cell" data-label="Acoes">
+                        <div className="legacy-actions">
+                          <button type="button" className="legacy-btn" onClick={() => openEditAnimal(row.idLocal)}>
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="legacy-btn"
+                            onClick={() => setAnimalLinhas((prev) => prev.filter((item) => item.idLocal !== row.idLocal))}
+                          >
+                            Remover
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -459,6 +743,74 @@ export default function MapaPesagemPage() {
           </div>
         </section>
       </main>
+
+      {animalModalOpen && (
+        <div className="legacy-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="legacy-modal" onClick={(event) => event.stopPropagation()}>
+            <header className="legacy-modal-header">
+              <h3>{animalEditId ? "Editar Linha Animal" : "Adicionar Linha Animal"}</h3>
+              <button type="button" className="legacy-btn" onClick={() => setAnimalModalOpen(false)}>
+                X
+              </button>
+            </header>
+            <div className="legacy-modal-body">
+              <div className="legacy-grid cols-4">
+                <label className="legacy-field">
+                  <span>Ordem</span>
+                  <input
+                    type="number"
+                    className="legacy-input"
+                    value={animalDraft.ordem}
+                    onChange={(event) => setAnimalDraft((prev) => ({ ...prev, ordem: event.target.value }))}
+                  />
+                </label>
+                <label className="legacy-field">
+                  <span>Quantidade Animal</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="legacy-input"
+                    value={animalDraft.quantidadeAnimal}
+                    onChange={(event) =>
+                      setAnimalDraft((prev) => ({ ...prev, quantidadeAnimal: sanitizeDecimal(event.target.value) }))
+                    }
+                  />
+                </label>
+                <label className="legacy-field">
+                  <span>Peso Medio(KG)</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="legacy-input"
+                    value={animalDraft.pesoMedioKg}
+                    onChange={(event) =>
+                      setAnimalDraft((prev) => ({ ...prev, pesoMedioKg: sanitizeDecimal(event.target.value) }))
+                    }
+                  />
+                </label>
+                <label className="legacy-field">
+                  <span>Peso Vivo(KG)</span>
+                  <input
+                    className="legacy-input"
+                    value={animalDraft.pesoVivoKg}
+                    readOnly
+                    disabled
+                  />
+                </label>
+              </div>
+
+              <div className="legacy-actions mt-3" style={{ justifyContent: "flex-end" }}>
+                <button type="button" className="legacy-btn" onClick={() => setAnimalModalOpen(false)}>
+                  Descartar
+                </button>
+                <button type="button" className="legacy-btn primary" onClick={saveAnimal}>
+                  Salvar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -471,29 +823,151 @@ function normalizeSearch(value: string): string {
     .trim();
 }
 
-function parseDecimalBr(value: string): number {
+function normalizeText(value: string | null | undefined): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function sanitizeDecimal(value: string): string {
+  return value.replace(/[^0-9,.-]/g, "");
+}
+
+function parseDecimal(value: string): number {
   const parsed = Number(String(value ?? "").replace(/\./g, "").replace(",", "."));
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function toDecimalString(value: number): string {
-  return Number.isFinite(value) ? String(value) : "0";
+function toDecimalString(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
+  return String(value);
 }
 
-function onlyDecimal(value: string): string {
-  return value.replace(/[^0-9.,-]/g, "").replace(",", ".");
-}
-
-function toNumberBr(value: number): string {
+function formatDecimalInput(value: number): string {
+  if (!Number.isFinite(value)) return "";
   return value.toLocaleString("pt-BR", {
-    minimumFractionDigits: 0,
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 }
 
-function toDateLabel(value: string): string {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString("pt-BR");
+function parseMapaPayload(payload: Record<string, string>): { draft: MapaDraft; animais: AnimalLinha[] } {
+  const animais = parseAnimaisJson(payload.animaisJson ?? "");
+  return {
+    draft: {
+      numeroMapa: payload.numeroMapa ?? "",
+      dataJejum: payload.dataJejum ?? "",
+      horaInicioJejum: payload.horaInicioJejum ?? "",
+      horaFimJejum: payload.horaFimJejum ?? "",
+      dataPesagem: payload.dataPesagem ?? payload.dataInicio ?? payload.dt_inicio ?? "",
+      horaInicioPesagem: payload.horaInicioPesagem ?? "",
+      horaFimPesagem: payload.horaFimPesagem ?? "",
+      qualidade: payload.qualidade ?? "",
+      placa: payload.placa ?? "",
+      motorista: payload.motorista ?? "",
+      rendimentoCarcaca: payload.rendimentoCarcaca ?? "",
+      pesoBrutoKg: payload.pesoBrutoKg ?? payload.pesoTotalKg ?? payload.pesoKg ?? "",
+      pesoTotalArroba: payload.pesoTotalArroba ?? "",
+      pesoMedioArroba: payload.pesoMedioArroba ?? "",
+      quantidadeAnimais: payload.quantidadeAnimais ?? payload.quantidade ?? payload.qt ?? "",
+      pesoLiquidoArroba: payload.pesoLiquidoArroba ?? "",
+      valorArroba: payload.valorArroba ?? payload.valor ?? "",
+      valorTotal: payload.valorTotal ?? "",
+      valorComissao: payload.valorComissao ?? "",
+      comprador: payload.comprador ?? "",
+      responsavel: payload.responsavel ?? "",
+      telefoneResponsavel: payload.telefoneResponsavel ?? "",
+      cpfResponsavel: payload.cpfResponsavel ?? "",
+      observacao: payload.observacao ?? "",
+    },
+    animais,
+  };
+}
+
+function parseAnimaisJson(raw: string): AnimalLinha[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((row, index) => ({
+      idLocal: `animal-${index}-${Date.now()}`,
+      ordem: String(row.ordem ?? ""),
+      quantidadeAnimal: String(row.quantidadeAnimal ?? row.quantidade ?? ""),
+      pesoMedioKg: String(row.pesoMedioKg ?? row.pesoMedio ?? ""),
+      pesoVivoKg: String(row.pesoVivoKg ?? row.pesoVivo ?? ""),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function buildMapasTotals(mapas: Record<string, string>[]): {
+  quantidadeAnimais: number;
+  pesoMapaKg: number;
+  pesoTotalArroba: number;
+  pesoMedioArroba: number;
+  pesoLiquidoArroba: number;
+  rendimentoCarcaca: number;
+} {
+  return mapas.reduce(
+    (acc, row) => {
+      const parsed = parseMapaPayload(row);
+      const quantidadeAnimaisMapa = parsed.animais.reduce((sum, animal) => sum + parseDecimal(animal.quantidadeAnimal), 0);
+      const pesoBrutoMapa = parsed.animais.reduce((sum, animal) => sum + parseDecimal(animal.pesoVivoKg), 0);
+
+      const quantidadeAnimais = parseDecimal(parsed.draft.quantidadeAnimais);
+      const pesoMapaKg = parseDecimal(parsed.draft.pesoBrutoKg);
+      const pesoTotalArroba = parseDecimal(parsed.draft.pesoTotalArroba);
+      const pesoLiquidoArroba = parseDecimal(parsed.draft.pesoLiquidoArroba);
+      const rendimentoCarcaca = parseDecimal(parsed.draft.rendimentoCarcaca);
+
+      acc.quantidadeAnimais += quantidadeAnimais > 0 ? quantidadeAnimais : quantidadeAnimaisMapa;
+      acc.pesoMapaKg += pesoMapaKg > 0 ? pesoMapaKg : pesoBrutoMapa;
+      acc.pesoTotalArroba += pesoTotalArroba;
+      acc.pesoLiquidoArroba += pesoLiquidoArroba;
+      acc.rendimentoCarcaca += rendimentoCarcaca;
+      return acc;
+    },
+    {
+      quantidadeAnimais: 0,
+      pesoMapaKg: 0,
+      pesoTotalArroba: 0,
+      pesoMedioArroba: 0,
+      pesoLiquidoArroba: 0,
+      rendimentoCarcaca: 0,
+    },
+  );
+}
+
+function serializeMapaPayload(draft: MapaDraft, animais: AnimalLinha[]): Record<string, string> {
+  return {
+    numeroMapa: draft.numeroMapa,
+    dataJejum: draft.dataJejum,
+    horaInicioJejum: draft.horaInicioJejum,
+    horaFimJejum: draft.horaFimJejum,
+    dataPesagem: draft.dataPesagem,
+    horaInicioPesagem: draft.horaInicioPesagem,
+    horaFimPesagem: draft.horaFimPesagem,
+    qualidade: draft.qualidade,
+    placa: draft.placa,
+    motorista: draft.motorista,
+    rendimentoCarcaca: draft.rendimentoCarcaca,
+    pesoBrutoKg: draft.pesoBrutoKg,
+    pesoTotalArroba: draft.pesoTotalArroba,
+    pesoMedioArroba: draft.pesoMedioArroba,
+    quantidadeAnimais: draft.quantidadeAnimais,
+    pesoLiquidoArroba: draft.pesoLiquidoArroba,
+    valorArroba: draft.valorArroba,
+    valorTotal: draft.valorTotal,
+    valorComissao: draft.valorComissao,
+    comprador: draft.comprador,
+    responsavel: draft.responsavel,
+    telefoneResponsavel: draft.telefoneResponsavel,
+    cpfResponsavel: draft.cpfResponsavel,
+    observacao: draft.observacao,
+    animaisJson: JSON.stringify(animais.map(({ ordem, quantidadeAnimal, pesoMedioKg, pesoVivoKg }) => ({ ordem, quantidadeAnimal, pesoMedioKg, pesoVivoKg }))),
+
+    dataInicio: draft.dataPesagem,
+    quantidade: draft.quantidadeAnimais,
+    pesoTotalKg: draft.pesoBrutoKg,
+    descricao: draft.placa || draft.motorista ? `${draft.placa} ${draft.motorista}`.trim() : "MAPA DE PESAGEM",
+  };
 }

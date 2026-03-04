@@ -8,6 +8,7 @@ import type {
   ContratoEntradaAnimaisStatusChangeInput,
   ContratoEntradaAnimaisUpdateInput,
   ContratoLinhaPayload,
+  ContratoOutrosInput,
   ContratoParceiroSapInput,
   ContratoStatus,
 } from "@/lib/types/contrato";
@@ -24,11 +25,14 @@ type Queryable = Pool | PoolClient;
 type JsonObject = Record<string, unknown>;
 type MetadataPayload = {
   dadosGerais?: ContratoDadosGeraisInput | null;
+  outros?: ContratoOutrosInput | null;
   mapas?: ContratoLinhaPayload[] | null;
   custosCategorias?: ContratoLinhaPayload[] | null;
   comissionadoId?: number | null;
   comissionadoSap?: ContratoParceiroSapInput | null;
   emissorNotaId?: number | null;
+  clausulaModeloId?: number | null;
+  clausulaTitulo?: string | null;
   empresaSap?: ContratoEmpresaSapInput | null;
   parceiroSap?: ContratoParceiroSapInput | null;
 };
@@ -61,10 +65,18 @@ export async function listContratosEntradaAnimais(filters: ListFilters) {
   const offset = (filters.page - 1) * filters.pageSize;
 
   const withParceiro = await hasTable(pool, "dbo.res_partner");
+  const withContratoItem = await hasTable(pool, "contrato.contrato_item");
+  const withContratoPrevisao = await hasTable(pool, "contrato.contrato_previsao");
   const parceiroJoin = withParceiro ? "LEFT JOIN dbo.res_partner p ON p.id = c.parceiro_id" : "";
   const parceiroSelect = withParceiro
     ? "trim(BOTH ' - ' FROM concat_ws(' - ', coalesce(to_jsonb(p)->>'codigo', to_jsonb(p)->>'ref', c.parceiro_codigo_snapshot), coalesce(to_jsonb(p)->>'nome', to_jsonb(p)->>'name', c.parceiro_nome_snapshot), coalesce(to_jsonb(p)->>'documento', to_jsonb(p)->>'cnpj_cpf', to_jsonb(p)->>'vat', c.parceiro_documento_snapshot))) AS parceiro"
     : "trim(BOTH ' - ' FROM concat_ws(' - ', c.parceiro_codigo_snapshot, c.parceiro_nome_snapshot, c.parceiro_documento_snapshot)) AS parceiro";
+  const valorTotalItensSelect = withContratoItem
+    ? "coalesce((SELECT sum(coalesce(ci.vl_total, 0)) FROM contrato.contrato_item ci WHERE ci.contrato_id = c.id), 0) AS \"valorTotalItens\""
+    : "0::numeric AS \"valorTotalItens\"";
+  const temMapaSelect = withContratoPrevisao
+    ? "EXISTS(SELECT 1 FROM contrato.contrato_previsao cp WHERE cp.contrato_id = c.id) AS \"temMapa\""
+    : "false AS \"temMapa\"";
   const parceiroSearch = withParceiro
     ? "OR coalesce(to_jsonb(p)->>'nome', to_jsonb(p)->>'name', '') ILIKE '%' || $3 || '%' OR coalesce(to_jsonb(p)->>'codigo', to_jsonb(p)->>'ref', '') ILIKE '%' || $3 || '%' OR coalesce(to_jsonb(p)->>'documento', to_jsonb(p)->>'cnpj_cpf', to_jsonb(p)->>'vat', '') ILIKE '%' || $3 || '%'"
     : "";
@@ -100,7 +112,8 @@ export async function listContratosEntradaAnimais(filters: ListFilters) {
         ${NORMALIZED_STATUS_SQL} AS status,
         coalesce(c.tp_contrato, 'entrada_animais') AS "tipoContrato",
         c.dt_inicio AS "inicioEm",
-        coalesce(c.b1_vl_pago, 0) AS "valorPagoSap",
+        ${valorTotalItensSelect},
+        ${temMapaSelect},
         c.observacao AS "_observacao"
       FROM contrato.contrato c
       ${parceiroJoin}
@@ -129,7 +142,8 @@ export async function listContratosEntradaAnimais(filters: ListFilters) {
         ...row,
         parceiro: toNullableString(row.parceiro) ?? parceiroFallback ?? null,
         status: normalizeStatus(row.status),
-        valorPagoSap: toNumber(row.valorPagoSap),
+        valorTotalItens: toNumber(row.valorTotalItens),
+        temMapa: Boolean(row.temMapa),
       };
     }),
     total: Number.parseInt(countResult.rows[0]?.total ?? "0", 10),
@@ -185,11 +199,19 @@ export async function getContratoEntradaAnimaisById(id: number) {
     contrato.empresa_codigo = toNullableString(contrato.empresa_codigo) ?? toNullableString(contrato.empresa_codigo_snapshot) ?? empresaSap.codigo;
     (contrato as Record<string, unknown>).empresa_cnpj =
       toNullableString((contrato as Record<string, unknown>).empresa_cnpj) ?? toNullableString((contrato as Record<string, unknown>).empresa_cnpj_snapshot) ?? empresaSap.cnpj;
+    (contrato as Record<string, unknown>).empresa_ie = toNullableString((contrato as Record<string, unknown>).empresa_ie) ?? empresaSap.rgIe ?? null;
+    (contrato as Record<string, unknown>).empresa_telefone = toNullableString((contrato as Record<string, unknown>).empresa_telefone) ?? empresaSap.telefone ?? null;
+    (contrato as Record<string, unknown>).empresa_email = toNullableString((contrato as Record<string, unknown>).empresa_email) ?? empresaSap.email ?? null;
+    (contrato as Record<string, unknown>).empresa_endereco = toNullableString((contrato as Record<string, unknown>).empresa_endereco) ?? empresaSap.endereco ?? null;
   }
   if (parceiroSap?.nome) {
     contrato.parceiro_nome_base = toNullableString(contrato.parceiro_nome_base) ?? toNullableString(contrato.parceiro_nome_snapshot) ?? parceiroSap.nome;
     contrato.parceiro_codigo_base = toNullableString(contrato.parceiro_codigo_base) ?? toNullableString(contrato.parceiro_codigo_snapshot) ?? parceiroSap.codigo;
     contrato.parceiro_documento_base = toNullableString(contrato.parceiro_documento_base) ?? toNullableString(contrato.parceiro_documento_snapshot) ?? parceiroSap.documento;
+    (contrato as Record<string, unknown>).parceiro_ie = toNullableString((contrato as Record<string, unknown>).parceiro_ie) ?? parceiroSap.rgIe ?? null;
+    (contrato as Record<string, unknown>).parceiro_telefone = toNullableString((contrato as Record<string, unknown>).parceiro_telefone) ?? parceiroSap.telefone ?? null;
+    (contrato as Record<string, unknown>).parceiro_email = toNullableString((contrato as Record<string, unknown>).parceiro_email) ?? parceiroSap.email ?? null;
+    (contrato as Record<string, unknown>).parceiro_endereco = toNullableString((contrato as Record<string, unknown>).parceiro_endereco) ?? parceiroSap.endereco ?? null;
   }
 
   const [itensRows, fretesRows, financeiroRows, notasRows, clausulasRows, previsoesRows] = await Promise.all([
@@ -208,10 +230,13 @@ export async function getContratoEntradaAnimaisById(id: number) {
       ...contrato,
       status: normalizeStatus(contrato.status),
       dadosGerais: readDadosGeraisFromMeta(metadata),
+      outros: readOutrosFromMeta(metadata),
       custosResumo: readCustosResumoFromContrato(contrato),
       comissionadoId: toNullableInteger(metadata?.comissionadoId),
       comissionadoSap: readComissionadoSapFromMeta(metadata),
       emissorNotaId: toNullableInteger(metadata?.emissorNotaId),
+      clausulaModeloId: toNullableInteger(contrato.clausula_id) ?? toNullableInteger(metadata?.clausulaModeloId),
+      clausulaTitulo: toNullableString(contrato.titulo_clausula) ?? toNullableString(metadata?.clausulaTitulo),
     },
     itens: itensRows.map(mapItemRowToPayload),
     fretes: fretesRows.map(mapFreteRowToPayload),
@@ -243,11 +268,14 @@ export async function createContratoEntradaAnimais(input: ContratoEntradaAnimais
 
     const metadata: MetadataPayload = {
       dadosGerais: input.dadosGerais ?? null,
+      outros: input.outros ?? null,
       mapas: input.mapas ?? null,
       custosCategorias: input.custosCategorias ?? null,
       comissionadoId: input.comissionadoId ?? null,
       comissionadoSap: input.comissionadoSap ?? null,
       emissorNotaId: input.emissorNotaId ?? null,
+      clausulaModeloId: input.clausulaModeloId ?? null,
+      clausulaTitulo: toNullableString(input.clausulaTitulo),
       empresaSap: input.empresaSap ?? null,
       parceiroSap: input.parceiroSap ?? null,
     };
@@ -471,22 +499,28 @@ export async function updateContratoEntradaAnimais(id: number, input: ContratoEn
     const currentObs = splitObservacoesAndMeta(lockResult.rows[0].observacao);
     const nextMeta = mergeMetadata(currentObs.meta, {
       dadosGerais: input.dadosGerais,
+      outros: input.outros,
       mapas: input.mapas,
       custosCategorias: input.custosCategorias,
       comissionadoId: input.comissionadoId,
       comissionadoSap: input.comissionadoSap,
       emissorNotaId: input.emissorNotaId,
+      clausulaModeloId: input.clausulaModeloId,
+      clausulaTitulo: input.clausulaTitulo,
       empresaSap: input.empresaSap,
       parceiroSap: input.parceiroSap,
     });
 
     const metadataChanged =
       input.dadosGerais !== undefined ||
+      input.outros !== undefined ||
       input.mapas !== undefined ||
       input.custosCategorias !== undefined ||
       input.comissionadoId !== undefined ||
       input.comissionadoSap !== undefined ||
       input.emissorNotaId !== undefined ||
+      input.clausulaModeloId !== undefined ||
+      input.clausulaTitulo !== undefined ||
       input.empresaSap !== undefined ||
       input.parceiroSap !== undefined;
 
@@ -952,6 +986,11 @@ function readDadosGeraisFromMeta(meta: JsonObject | null): ContratoDadosGeraisIn
   return meta.dadosGerais as ContratoDadosGeraisInput;
 }
 
+function readOutrosFromMeta(meta: JsonObject | null): ContratoOutrosInput {
+  if (!meta?.outros || typeof meta.outros !== "object" || Array.isArray(meta.outros)) return {};
+  return meta.outros as ContratoOutrosInput;
+}
+
 function readMapasFromMeta(meta: JsonObject | null): ContratoLinhaPayload[] | null {
   if (!meta?.mapas || !Array.isArray(meta.mapas)) return null;
   return meta.mapas
@@ -999,6 +1038,11 @@ function readEmpresaSapFromMeta(meta: JsonObject | null): ContratoEmpresaSapInpu
     codigo: toNullableString(row.codigo),
     nome,
     cnpj: toNullableString(row.cnpj),
+    rgIe: toNullableString(row.rgIe),
+    telefone: toNullableString(row.telefone),
+    email: toNullableString(row.email),
+    representanteLegal: toNullableString(row.representanteLegal),
+    endereco: toNullableString(row.endereco),
   };
 }
 
@@ -1012,6 +1056,15 @@ function readParceiroSapFromMeta(meta: JsonObject | null): ContratoParceiroSapIn
     codigo: toNullableString(row.codigo),
     nome,
     documento: toNullableString(row.documento),
+    rgIe: toNullableString(row.rgIe),
+    telefone: toNullableString(row.telefone),
+    email: toNullableString(row.email),
+    representanteLegal: toNullableString(row.representanteLegal),
+    cpf: toNullableString(row.cpf),
+    rg: toNullableString(row.rg),
+    profissao: toNullableString(row.profissao),
+    estadoCivil: toNullableString(row.estadoCivil),
+    endereco: toNullableString(row.endereco),
   };
 }
 
@@ -1027,6 +1080,15 @@ function readComissionadoSapFromMeta(meta: JsonObject | null): ContratoParceiroS
     codigo: toNullableString(row.codigo),
     nome,
     documento: toNullableString(row.documento),
+    rgIe: toNullableString(row.rgIe),
+    telefone: toNullableString(row.telefone),
+    email: toNullableString(row.email),
+    representanteLegal: toNullableString(row.representanteLegal),
+    cpf: toNullableString(row.cpf),
+    rg: toNullableString(row.rg),
+    profissao: toNullableString(row.profissao),
+    estadoCivil: toNullableString(row.estadoCivil),
+    endereco: toNullableString(row.endereco),
   };
 }
 
@@ -1047,6 +1109,12 @@ function mergeMetadata(currentMeta: JsonObject | null, patch: MetadataPayload): 
         ? patch.dadosGerais
         : current.dadosGerais && typeof current.dadosGerais === "object" && !Array.isArray(current.dadosGerais)
           ? (current.dadosGerais as ContratoDadosGeraisInput)
+          : null,
+    outros:
+      patch.outros !== undefined
+        ? patch.outros
+        : current.outros && typeof current.outros === "object" && !Array.isArray(current.outros)
+          ? (current.outros as ContratoOutrosInput)
           : null,
     mapas:
       patch.mapas !== undefined
@@ -1072,6 +1140,10 @@ function mergeMetadata(currentMeta: JsonObject | null, patch: MetadataPayload): 
         : readComissionadoSapFromMeta(current) ?? null,
     emissorNotaId:
       patch.emissorNotaId !== undefined ? patch.emissorNotaId : toNullableInteger(current.emissorNotaId),
+    clausulaModeloId:
+      patch.clausulaModeloId !== undefined ? patch.clausulaModeloId : toNullableInteger(current.clausulaModeloId),
+    clausulaTitulo:
+      patch.clausulaTitulo !== undefined ? patch.clausulaTitulo : toNullableString(current.clausulaTitulo),
     empresaSap:
       patch.empresaSap !== undefined
         ? patch.empresaSap
@@ -1084,11 +1156,14 @@ function mergeMetadata(currentMeta: JsonObject | null, patch: MetadataPayload): 
 
   const hasData =
     Boolean(merged.dadosGerais && Object.keys(merged.dadosGerais).length > 0) ||
+    Boolean(merged.outros && Object.keys(merged.outros).length > 0) ||
     Boolean(merged.mapas && merged.mapas.length > 0) ||
     Boolean(merged.custosCategorias && merged.custosCategorias.length > 0) ||
     merged.comissionadoId !== null ||
     Boolean(merged.comissionadoSap?.nome) ||
     merged.emissorNotaId !== null ||
+    merged.clausulaModeloId !== null ||
+    Boolean(merged.clausulaTitulo) ||
     Boolean(merged.empresaSap?.nome) ||
     Boolean(merged.parceiroSap?.nome);
 

@@ -12,13 +12,13 @@ export async function GET(_: Request, { params }: Params) {
   const contratoId = Number.parseInt(id, 10);
 
   if (Number.isNaN(contratoId) || contratoId <= 0) {
-    return NextResponse.json({ error: "ID invalido." }, { status: 400 });
+    return NextResponse.json({ error: "ID inválido." }, { status: 400 });
   }
 
   try {
     const data = await getContratoEntradaAnimaisById(contratoId);
     if (!data) {
-      return NextResponse.json({ error: "Contrato nao encontrado." }, { status: 404 });
+      return NextResponse.json({ error: "Contrato não encontrado." }, { status: 404 });
     }
 
     const contrato = data.contrato as Record<string, unknown>;
@@ -51,25 +51,29 @@ export async function GET(_: Request, { params }: Params) {
 }
 
 async function resolveContractParties(contrato: Record<string, unknown>, financeiroRows: Array<Record<string, unknown>>) {
-  const compradorCode = pickText(contrato, [
+  const compradorRefs = collectPartyReferences(contrato, [
     "empresa_codigo",
     "empresa_codigo_snapshot",
     "empresa_external_id",
     "empresa_nome_snapshot",
     "empresa_nome",
     "empresa",
+    "empresa_cnpj",
+    "empresa_cnpj_snapshot",
   ]);
-  const vendedorCode = pickText(contrato, [
+  const vendedorRefs = collectPartyReferences(contrato, [
     "parceiro_codigo_base",
     "parceiro_codigo_snapshot",
     "parceiro_external_id",
     "parceiro_nome_snapshot",
     "parceiro_nome_base",
+    "parceiro_documento_base",
+    "parceiro_documento_snapshot",
   ]);
 
   const [compradorSap, vendedorSap] = await Promise.all([
-    compradorCode ? getBusinessPartnerProfileFromSap(compradorCode) : Promise.resolve(null),
-    vendedorCode ? getBusinessPartnerProfileFromSap(vendedorCode) : Promise.resolve(null),
+    resolveSapProfileByReferences(compradorRefs),
+    resolveSapProfileByReferences(vendedorRefs),
   ]);
 
   const financeiroDefaults = pickFinanceiroDefaults(financeiroRows);
@@ -79,7 +83,15 @@ async function resolveContractParties(contrato: Record<string, unknown>, finance
       {
         nome: pickText(contrato, ["empresa_nome", "empresa_nome_snapshot", "empresa"]),
         cnpjCpf: pickText(contrato, ["empresa_cnpj", "empresa_cnpj_snapshot"]),
+        rgIe: pickText(contrato, ["empresa_ie", "empresa_rg_ie", "empresa_rgie"]),
+        telefone: pickText(contrato, ["empresa_telefone", "telefone_empresa"]),
+        email: pickText(contrato, ["empresa_email", "email_empresa"]),
         representanteLegal: pickText(contrato, ["assinatura_empresa"]),
+        cpf: pickText(contrato, ["empresa_cpf"]),
+        rg: pickText(contrato, ["empresa_rg"]),
+        profissao: pickText(contrato, ["empresa_profissao"]),
+        estadoCivil: pickText(contrato, ["empresa_estado_civil"]),
+        endereco: pickText(contrato, ["empresa_endereco", "empresa_endereco_snapshot"]),
       },
       compradorSap,
     ),
@@ -87,7 +99,15 @@ async function resolveContractParties(contrato: Record<string, unknown>, finance
       {
         nome: pickText(contrato, ["parceiro_nome_base", "parceiro_nome_snapshot"]),
         cnpjCpf: pickText(contrato, ["parceiro_documento_base", "parceiro_documento_snapshot"]),
+        rgIe: pickText(contrato, ["parceiro_ie", "parceiro_rg_ie", "parceiro_rgie"]),
+        telefone: pickText(contrato, ["parceiro_telefone", "telefone_parceiro"]),
+        email: pickText(contrato, ["parceiro_email", "email_parceiro"]),
         representanteLegal: pickText(contrato, ["assinatura_parceiro"]),
+        cpf: pickText(contrato, ["parceiro_cpf"]),
+        rg: pickText(contrato, ["parceiro_rg"]),
+        profissao: pickText(contrato, ["parceiro_profissao"]),
+        estadoCivil: pickText(contrato, ["parceiro_estado_civil"]),
+        endereco: pickText(contrato, ["parceiro_endereco", "parceiro_endereco_snapshot"]),
         banco: financeiroDefaults.banco,
         agencia: financeiroDefaults.agencia,
         conta: financeiroDefaults.conta,
@@ -99,10 +119,10 @@ async function resolveContractParties(contrato: Record<string, unknown>, finance
     ),
     consideracoesIniciais:
       pickText(contrato, ["consideracoes_iniciais", "consideracoesIniciais"]) ||
-      "As partes tem entre si, como justo e contratado o presente contrato que sera regido de acordo com as clausulas e condicoes adiante dispostas, sendo o Anexo I parte integrante do presente instrumento.",
+      "As partes têm entre si, como justo e contratado, o presente contrato, que será regido de acordo com as cláusulas e condições adiante dispostas, sendo o Anexo I parte integrante do presente instrumento.",
     cidadeAssinatura:
       pickText(contrato, ["cidade_assinatura", "cidade_nome", "cidade", "municipio_nome", "municipio"]) ||
-      "Luis Eduardo Magalhaes, Bahia",
+      "Luís Eduardo Magalhães, Bahia",
   };
 }
 
@@ -110,7 +130,15 @@ function mergePartyProfile(
   fallback: {
     nome: string;
     cnpjCpf: string;
+    rgIe?: string;
+    telefone?: string;
+    email?: string;
     representanteLegal: string;
+    cpf?: string;
+    rg?: string;
+    profissao?: string;
+    estadoCivil?: string;
+    endereco?: string;
     banco?: string;
     agencia?: string;
     conta?: string;
@@ -123,22 +151,47 @@ function mergePartyProfile(
   return {
     nome: sap?.cardName || fallback.nome,
     cnpjCpf: sap?.document || fallback.cnpjCpf,
-    rgIe: sap?.rgIe || "",
-    telefone: sap?.phone || "",
-    email: sap?.email || "",
+    rgIe: sap?.rgIe || fallback.rgIe || "",
+    telefone: sap?.phone || fallback.telefone || "",
+    email: sap?.email || fallback.email || "",
     representanteLegal: sap?.legalRep || fallback.representanteLegal,
-    cpf: sap?.cpf || "",
-    rg: sap?.rg || "",
-    profissao: sap?.profession || "",
-    estadoCivil: sap?.maritalStatus || "",
+    cpf: sap?.cpf || fallback.cpf || "",
+    rg: sap?.rg || fallback.rg || "",
+    profissao: sap?.profession || fallback.profissao || "",
+    estadoCivil: sap?.maritalStatus || fallback.estadoCivil || "",
     banco: fallback.banco || sap?.bank || "",
     agencia: fallback.agencia || sap?.agency || "",
     conta: fallback.conta || sap?.account || "",
     digito: fallback.digito || sap?.digit || "",
     condicaoPagamento: fallback.condicaoPagamento || sap?.paymentTerm || "",
     formaPagamento: fallback.formaPagamento || sap?.paymentMethod || "",
-    endereco: sap?.address || "",
+    endereco: sap?.address || fallback.endereco || "",
   };
+}
+
+function collectPartyReferences(contrato: Record<string, unknown>, keys: string[]): string[] {
+  const refs = new Set<string>();
+  for (const key of keys) {
+    const raw = pickText(contrato, [key]);
+    if (!raw) continue;
+    const trimmed = raw.trim();
+    if (trimmed) refs.add(trimmed);
+
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length >= 8) refs.add(digits);
+  }
+  return Array.from(refs);
+}
+
+async function resolveSapProfileByReferences(references: string[]): Promise<SapBusinessPartnerProfile | null> {
+  for (const reference of references) {
+    if (!reference) continue;
+    const profile = await getBusinessPartnerProfileFromSap(reference);
+    if (profile) {
+      return profile;
+    }
+  }
+  return null;
 }
 
 function pickFinanceiroDefaults(rows: Array<Record<string, unknown>>) {

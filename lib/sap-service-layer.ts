@@ -71,6 +71,37 @@ export type SapBranch = {
   active: boolean;
 };
 
+export type SapPurchaseOrderLineInput = {
+  itemCode: string;
+  quantity: number;
+  unitPrice?: number | null;
+  warehouseCode?: string | null;
+  costingCode?: string | null;
+  distributionRule?: string | null;
+  usage?: string | number | null;
+  taxCode?: string | null;
+  shipDate?: string | null;
+};
+
+export type SapPurchaseOrderCreateInput = {
+  cardCode: string;
+  docDate?: string | null;
+  docDueDate?: string | null;
+  taxDate?: string | null;
+  numAtCard?: string | null;
+  comments?: string | null;
+  bplId?: number | null;
+  paymentGroupCode?: number | null;
+  paymentMethod?: string | null;
+  lines: SapPurchaseOrderLineInput[];
+};
+
+export type SapPurchaseOrderCreateResult = {
+  docEntry: number | null;
+  docNum: number | null;
+  raw: Record<string, unknown>;
+};
+
 let sessionCache: SapSession | null = null;
 let sessionPromise: Promise<SapSession> | null = null;
 
@@ -247,6 +278,181 @@ async function requestJson<T>(pathAndQuery: string, retry = true): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestJsonPost<T>(pathAndQuery: string, body: Record<string, unknown>, retry = true): Promise<T> {
+  const config = getConfig();
+  if (!config.configured) {
+    throw new Error("ConfiguraÃ§Ã£o SAP Service Layer ausente.");
+  }
+
+  const session = await getSession();
+  const url = `${buildBaseUrl(config.baseUrl)}${pathAndQuery.startsWith("/") ? "" : "/"}${pathAndQuery}`;
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[DEBUG SAP SL RAW BASE]", config.baseUrl);
+    console.info("[DEBUG SAP SL RAW PATH]", pathAndQuery);
+    console.info("[DEBUG SAP SL] POST", url);
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Cookie: session.cookie,
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+
+  if (response.status === 401 && retry) {
+    sessionCache = null;
+    sessionPromise = null;
+    return requestJsonPost<T>(pathAndQuery, body, false);
+  }
+
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => "");
+    throw new Error(`Falha na consulta SAP Service Layer (${response.status}) em ${url}: ${responseBody.slice(0, 200)}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+function toSapDate(value: unknown): string | null {
+  const parsed = normalizeText(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(parsed) ? parsed : null;
+}
+
+function toSapNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) return null;
+  return parsed;
+}
+
+function parseUsageValue(value: unknown): { numeric: number | null; text: string | null } {
+  const raw = normalizeText(value);
+  if (!raw) return { numeric: null, text: null };
+
+  const numericDirect = toSapNumber(raw);
+  if (numericDirect !== null) {
+    return { numeric: numericDirect, text: null };
+  }
+
+  const prefix = raw.split(" - ")[0]?.trim() ?? "";
+  const numericPrefix = toSapNumber(prefix);
+  if (numericPrefix !== null) {
+    return { numeric: numericPrefix, text: raw };
+  }
+
+  return { numeric: null, text: raw };
+}
+
+function isPostingDateRangeError(message: string): boolean {
+  const normalized = normalizeText(message).toLowerCase();
+  return normalized.includes("posting date deviates from the defined range");
+}
+
+export async function createPurchaseOrderInSap(input: SapPurchaseOrderCreateInput): Promise<SapPurchaseOrderCreateResult> {
+  if (!isSapServiceLayerConfigured()) {
+    throw new Error("ConfiguraÃ§Ã£o SAP Service Layer ausente.");
+  }
+
+  const cardCode = normalizeText(input.cardCode);
+  if (!cardCode) {
+    throw new Error("CardCode do parceiro nao informado para o pedido SAP.");
+  }
+
+  const lines = input.lines
+    .map((line) => {
+      const itemCode = normalizeText(line.itemCode);
+      const quantity = toSapNumber(line.quantity);
+      if (!itemCode || quantity === null || quantity <= 0) return null;
+
+      const mapped: Record<string, unknown> = {
+        ItemCode: itemCode,
+        Quantity: quantity,
+      };
+
+      const unitPrice = toSapNumber(line.unitPrice);
+      if (unitPrice !== null && unitPrice >= 0) mapped.UnitPrice = unitPrice;
+
+      const warehouseCode = normalizeText(line.warehouseCode);
+      if (warehouseCode) mapped.WarehouseCode = warehouseCode;
+
+      const costingCode = normalizeText(line.distributionRule ?? line.costingCode);
+      if (costingCode) mapped.CostingCode = costingCode;
+
+      const usage = parseUsageValue(line.usage);
+      if (usage.numeric !== null) mapped.Usage = usage.numeric;
+      if (usage.text) mapped.U_Utilizacao = usage.text;
+
+      const taxCode = normalizeText(line.taxCode);
+      if (taxCode) mapped.TaxCode = taxCode;
+
+      const shipDate = toSapDate(line.shipDate);
+      if (shipDate) mapped.ShipDate = shipDate;
+
+      return mapped;
+    })
+    .filter((line): line is Record<string, unknown> => line !== null);
+
+  if (lines.length === 0) {
+    throw new Error("Nenhum item valido encontrado para gerar o pedido de compra no SAP.");
+  }
+
+  const payload: Record<string, unknown> = {
+    CardCode: cardCode,
+    DocumentLines: lines,
+  };
+
+  const docDate = toSapDate(input.docDate);
+  if (docDate) payload.DocDate = docDate;
+
+  const docDueDate = toSapDate(input.docDueDate);
+  if (docDueDate) payload.DocDueDate = docDueDate;
+
+  const taxDate = toSapDate(input.taxDate);
+  if (taxDate) payload.TaxDate = taxDate;
+
+  const comments = normalizeText(input.comments);
+  if (comments) payload.Comments = comments;
+
+  const numAtCard = normalizeText(input.numAtCard);
+  if (numAtCard) payload.NumAtCard = numAtCard;
+
+  const bplId = toSapNumber(input.bplId);
+  if (bplId !== null) payload.BPL_IDAssignedToInvoice = bplId;
+
+  const paymentGroupCode = toSapNumber(input.paymentGroupCode);
+  if (paymentGroupCode !== null) payload.PaymentGroupCode = paymentGroupCode;
+
+  const paymentMethod = normalizeText(input.paymentMethod);
+  if (paymentMethod) payload.PaymentMethod = paymentMethod;
+
+  let response: Record<string, unknown>;
+  try {
+    response = await requestJsonPost<Record<string, unknown>>("/PurchaseOrders", payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (!isPostingDateRangeError(message)) {
+      throw error;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    payload.DocDate = today;
+    payload.DocDueDate = today;
+    payload.TaxDate = today;
+    response = await requestJsonPost<Record<string, unknown>>("/PurchaseOrders", payload);
+  }
+  const docEntry = toSapNumber(response.DocEntry);
+  const docNum = toSapNumber(response.DocNum);
+
+  return {
+    docEntry: docEntry === null ? null : Math.trunc(docEntry),
+    docNum: docNum === null ? null : Math.trunc(docNum),
+    raw: response,
+  };
+}
+
 async function tryReadCollection(pathAndQuery: string): Promise<Record<string, unknown>[] | null> {
   try {
     const json = await requestJson<ODataListResponse<Record<string, unknown>>>(pathAndQuery);
@@ -321,10 +527,18 @@ export async function listBusinessPartnersFromSap(search: string, limit: number)
   const maxItems = !Number.isFinite(limit) || limit <= 0 ? 20000 : Math.min(Math.max(limit, 1), 20000);
   const searchTerm = search.trim();
   if (searchTerm) {
-    const fromSearch = await loadPartnersBySearch(searchTerm, maxItems);
-    if (fromSearch.length > 0) {
-      return fromSearch;
-    }
+    const [fromSearch, mapped] = await Promise.all([loadPartnersBySearch(searchTerm, maxItems), getCachedPartners()]);
+
+    const searchNormalized = normalizeSearchText(searchTerm);
+    const searchDoc = searchNormalized.replace(/\D/g, "");
+    const fromCache = mapped.filter((item) =>
+      normalizeSearchText(item.cardName).includes(searchNormalized) ||
+      normalizeSearchText(item.cardCode).includes(searchNormalized) ||
+      (searchDoc ? (item.document ?? "").includes(searchDoc) : false),
+    );
+
+    const merged = mergeBusinessPartners(fromSearch, fromCache).slice(0, maxItems);
+    if (merged.length > 0) return merged;
   }
 
   const mapped = await getCachedPartners();
@@ -369,11 +583,19 @@ export async function getBusinessPartnerProfileFromSap(cardCode: string): Promis
   }
 
   const escapedReference = escapeODataString(normalizedReference);
+  const referenceDocumentDigits = normalizeDocument(normalizedReference);
   const filterCandidates = [
     `CardCode eq '${escapedReference}'`,
     `CardName eq '${escapedReference}'`,
     `contains(CardCode,'${escapedReference}') or contains(CardName,'${escapedReference}')`,
   ];
+  if (referenceDocumentDigits && referenceDocumentDigits.length >= 8) {
+    const escapedDoc = escapeODataString(referenceDocumentDigits);
+    filterCandidates.push(`FederalTaxID eq '${escapedDoc}'`);
+    filterCandidates.push(`TaxIdNum eq '${escapedDoc}'`);
+    filterCandidates.push(`contains(FederalTaxID,'${escapedDoc}')`);
+    filterCandidates.push(`contains(TaxIdNum,'${escapedDoc}')`);
+  }
 
   for (const filter of filterCandidates) {
     const encodedFilter = encodeURIComponent(filter);
@@ -491,9 +713,7 @@ async function loadPartners(): Promise<SapBusinessPartner[]> {
 async function loadPartnersBySearch(search: string, limit: number): Promise<SapBusinessPartner[]> {
   const top = Math.min(Math.max(limit, 200), 1000);
   const maxPages = Math.max(Number.parseInt(readEnv("SAP_SL_PARTNERS_SEARCH_MAX_PAGES") || "20", 10) || 20, 1);
-  const escapedSearch = escapeODataString(search);
-  const filter = `contains(CardName,'${escapedSearch}') or contains(CardCode,'${escapedSearch}')`;
-  const encodedFilter = encodeURIComponent(filter);
+  const filters = buildBusinessPartnerSearchFilters(search);
   const selectCandidates = [
     "CardCode,CardName,FederalTaxID,Frozen,ValidFor",
     "CardCode,CardName,FederalTaxID,Frozen",
@@ -501,21 +721,90 @@ async function loadPartnersBySearch(search: string, limit: number): Promise<SapB
     "",
   ];
 
-  for (const selectClause of selectCandidates) {
-    const query = selectClause
-      ? `/BusinessPartners?$select=${selectClause}&$filter=${encodedFilter}&$orderby=CardName&$top=${top}`
-      : `/BusinessPartners?$filter=${encodedFilter}&$orderby=CardName&$top=${top}`;
-    const rows = await tryReadCollectionPaged(query, maxPages);
-    if (!rows) {
-      continue;
+  const foundRows: Record<string, unknown>[] = [];
+  const seenCodes = new Set<string>();
+
+  const appendRows = (rows: Record<string, unknown>[]) => {
+    for (const row of rows) {
+      const code = normalizeText(row.CardCode).toUpperCase();
+      if (!code || seenCodes.has(code)) continue;
+      seenCodes.add(code);
+      foundRows.push(row);
+      if (foundRows.length >= limit) return;
     }
-    const mapped = mapBusinessPartnersFromRows(rows);
-    if (mapped.length > 0) {
-      return mapped.slice(0, limit);
+  };
+
+  for (const filter of filters) {
+    const encodedFilter = encodeURIComponent(filter);
+    for (const selectClause of selectCandidates) {
+      const query = selectClause
+        ? `/BusinessPartners?$select=${selectClause}&$filter=${encodedFilter}&$orderby=CardName&$top=${top}`
+        : `/BusinessPartners?$filter=${encodedFilter}&$orderby=CardName&$top=${top}`;
+      const rows = await tryReadCollectionPaged(query, maxPages);
+      if (!rows) {
+        continue;
+      }
+      appendRows(rows);
+      if (foundRows.length >= limit) {
+        return mapBusinessPartnersFromRows(foundRows).slice(0, limit);
+      }
     }
   }
 
+  if (foundRows.length > 0) {
+    return mapBusinessPartnersFromRows(foundRows).slice(0, limit);
+  }
+
   return [];
+}
+
+function buildBusinessPartnerSearchFilters(search: string): string[] {
+  const term = search.trim();
+  if (!term) return [];
+
+  const variants = Array.from(
+    new Set(
+      [term, term.toUpperCase(), term.toLowerCase(), toTitleCase(term)]
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  );
+  const digits = term.replace(/\D/g, "");
+  const filters: string[] = [];
+
+  for (const variant of variants) {
+    const escaped = escapeODataString(variant);
+    const base = [`contains(CardName,'${escaped}')`, `contains(CardCode,'${escaped}')`];
+    filters.push(base.join(" or "));
+    if (digits.length >= 3) {
+      const escapedDigits = escapeODataString(digits);
+      filters.push(`${base.join(" or ")} or contains(FederalTaxID,'${escapedDigits}')`);
+    }
+  }
+
+  if (digits.length >= 3) {
+    const escapedDigits = escapeODataString(digits);
+    filters.push(`contains(CardCode,'${escapedDigits}')`);
+    filters.push(`contains(CardCode,'${escapedDigits}') or contains(FederalTaxID,'${escapedDigits}')`);
+  }
+
+  const escapedExact = escapeODataString(term);
+  filters.push(`CardCode eq '${escapedExact}'`);
+  filters.push(`CardName eq '${escapedExact}'`);
+
+  return Array.from(new Set(filters));
+}
+
+function mergeBusinessPartners(...groups: SapBusinessPartner[][]): SapBusinessPartner[] {
+  const byKey = new Map<string, SapBusinessPartner>();
+  for (const group of groups) {
+    for (const item of group) {
+      const code = normalizeText(item.cardCode).toUpperCase();
+      if (!code) continue;
+      if (!byKey.has(code)) byKey.set(code, item);
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 function mapBusinessPartnersFromRows(rows: Record<string, unknown>[]): SapBusinessPartner[] {
@@ -575,8 +864,12 @@ async function mapBusinessPartnerProfileFromRow(row: Record<string, unknown>): P
     rgIe: firstNonEmptyText([
       row.AdditionalID,
       row.StateInscription,
+      row.StateTaxNumber,
+      row.StateTaxId,
+      row.StateTaxID,
       row.RGIE,
       row.RgIe,
+      row.LicTradNum,
     ]),
     phone: firstNonEmptyText([row.Phone1, row.Phone2, row.Cellular]),
     email: firstNonEmptyText([row.E_Mail, row.EmailAddress]),

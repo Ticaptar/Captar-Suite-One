@@ -3,6 +3,7 @@ import {
   getContratoSaidaInsumosById,
   updateContratoSaidaInsumos,
 } from "@/lib/repositories/contratos-saida-insumos-repo";
+import { hydrateEmpresaSapSnapshot, hydrateParceiroSapSnapshot } from "@/lib/contracts/sap-snapshot";
 
 export const runtime = "nodejs";
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
@@ -43,8 +44,19 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   try {
+    const empresaSapInput = parseOptionalEmpresaSap(body.empresaSap);
+    const parceiroSapInput = parseOptionalParceiroSap(body.parceiroSap);
+
+    const [empresaSap, parceiroSap] = await Promise.all([
+      hydrateEmpresaSapSnapshot(empresaSapInput),
+      hydrateParceiroSapSnapshot(parceiroSapInput),
+    ]);
+
     const updated = await updateContratoSaidaInsumos(contratoId, {
+      tipoContrato: parseContratoTipo(body.tipoContrato),
+      empresaSap,
       parceiroId: parseOptionalPositiveInt(body.parceiroId),
+      parceiroSap,
       referenciaContrato: toOptionalString(body.referenciaContrato),
       refObjectId: body.refObjectId === null ? null : toOptionalString(body.refObjectId),
       assinaturaEm: body.assinaturaEm === null ? null : toOptionalString(body.assinaturaEm),
@@ -72,11 +84,15 @@ export async function PATCH(request: Request, { params }: Params) {
         | "por_unidade"
         | "por_km"
         | "sem_frete"
+        | "km_rodado"
+        | "peso"
         | undefined,
       valorUnitarioFrete: parseOptionalNumber(body.valorUnitarioFrete),
+      emissorNotaId: parseOptionalNullablePositiveInt(body.emissorNotaId),
       emissorNota: toOptionalString(body.emissorNota) as "empresa" | "parceiro" | "terceiro" | undefined,
       assinaturaParceiro: parseOptionalNullableString(body.assinaturaParceiro),
       assinaturaEmpresa: parseOptionalNullableString(body.assinaturaEmpresa),
+      comissionadoId: parseOptionalNullablePositiveInt(body.comissionadoId),
       comissionadoTipo: toOptionalString(body.comissionadoTipo) as
         | "nao_aplica"
         | "interno"
@@ -97,6 +113,16 @@ export async function PATCH(request: Request, { params }: Params) {
       sapDocNum: parseOptionalNullablePositiveInt(body.sapDocNum),
       sapValorPago: parseOptionalNumber(body.sapValorPago),
       sapUltimoSyncEm: parseOptionalNullableString(body.sapUltimoSyncEm),
+      itens: parseLinhas(body.itens),
+      fretes: parseLinhas(body.fretes),
+      financeiros: parseLinhas(body.financeiros ?? body.financeiro),
+      notas: parseLinhas(body.notas),
+      clausulas: parseLinhas(body.clausulas),
+      clausulaModeloId: parseOptionalNullablePositiveInt(body.clausulaModeloId),
+      clausulaTitulo: parseOptionalNullableString(body.clausulaTitulo),
+      previsoes: parseLinhas(body.previsoes),
+      mapas: parseLinhas(body.mapas),
+      dadosGerais: parseOptionalDadosGerais(body.dadosGerais),
       atualizadoPor: parseOptionalNullableString(body.atualizadoPor),
     });
 
@@ -155,5 +181,100 @@ function toOptionalBoolean(value: unknown): boolean | undefined {
   if (value === "true" || value === "1" || value === 1) return true;
   if (value === "false" || value === "0" || value === 0) return false;
   return undefined;
+}
+
+function parseContratoTipo(value: unknown): "saida_insumos" | "entrada_insumos" | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+  if (parsed === "entrada_insumos" || parsed.includes("entrada")) return "entrada_insumos";
+  if (parsed === "saida_insumos" || parsed.includes("saida")) return "saida_insumos";
+  return undefined;
+}
+
+function parseOptionalDadosGerais(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const dados = value as Record<string, unknown>;
+  const analises = Array.isArray(dados.analises)
+    ? dados.analises
+        .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+        .map((item) => {
+          const row = item as Record<string, unknown>;
+          return {
+            tipoAnalise: parseOptionalNullableString(row.tipoAnalise ?? row.tipo_analise) ?? null,
+            valorMaximo: parseOptionalNumber(row.valorMaximo ?? row.valor_maximo) ?? null,
+          };
+        })
+    : undefined;
+
+  return {
+    periodoProducao: parseOptionalNullableString(dados.periodoProducao),
+    fazenda: parseOptionalNullableString(dados.fazenda),
+    distanciaRaioKm: parseOptionalNumber(dados.distanciaRaioKm) ?? null,
+    programacaoRetirada: parseOptionalNullableString(dados.programacaoRetirada),
+    programacaoPagamento: parseOptionalNullableString(dados.programacaoPagamento),
+    analises,
+  };
+}
+
+function parseLinhas(value: unknown): Record<string, string>[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.entries(row).map(([key, rowValue]) => [key, rowValue === null || rowValue === undefined ? "" : String(rowValue)]),
+      );
+    });
+}
+
+function parseOptionalParceiroSap(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const nome = toOptionalString(row.nome);
+  if (!nome) return undefined;
+  return {
+    sapExternalId: toOptionalString(row.sapExternalId) ?? null,
+    codigo: toOptionalString(row.codigo) ?? null,
+    nome,
+    documento: toOptionalString(row.documento) ?? null,
+    rgIe: toOptionalString(row.rgIe) ?? null,
+    telefone: toOptionalString(row.telefone) ?? null,
+    email: toOptionalString(row.email) ?? null,
+    representanteLegal: toOptionalString(row.representanteLegal) ?? null,
+    cpf: toOptionalString(row.cpf) ?? null,
+    rg: toOptionalString(row.rg) ?? null,
+    profissao: toOptionalString(row.profissao) ?? null,
+    estadoCivil: toOptionalString(row.estadoCivil) ?? null,
+    endereco: toOptionalString(row.endereco) ?? null,
+  };
+}
+
+function parseOptionalEmpresaSap(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  const nome = toOptionalString(row.nome);
+  if (!nome) return undefined;
+  return {
+    sapExternalId: toOptionalString(row.sapExternalId) ?? null,
+    codigo: toOptionalString(row.codigo) ?? null,
+    nome,
+    cnpj: toOptionalString(row.cnpj) ?? null,
+    rgIe: toOptionalString(row.rgIe) ?? null,
+    telefone: toOptionalString(row.telefone) ?? null,
+    email: toOptionalString(row.email) ?? null,
+    representanteLegal: toOptionalString(row.representanteLegal) ?? null,
+    endereco: toOptionalString(row.endereco) ?? null,
+  };
 }
 

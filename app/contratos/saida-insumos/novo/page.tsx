@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
@@ -10,8 +10,8 @@ import type { ContratoStatus } from "@/lib/types/contrato";
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
 
 type TabKey = "dados" | "itens" | "frete" | "financeiro" | "notas" | "clausulas" | "previsoes" | "entrada_saida" | "sap_b1";
-type ModalType = "item" | "frete" | "financeiro" | "nota" | "previsao" | null;
-type PnPickerTarget = "parceiro";
+type ModalType = "item" | "frete" | "financeiro" | "nota" | "previsao" | "analise" | "clausula" | null;
+type PnPickerTarget = "parceiro" | "comissionado" | "emissor" | "transportador";
 
 type EmpresaOption = {
   id: number;
@@ -30,18 +30,105 @@ type ParceiroOption = {
   sapExternalId?: string | null;
 };
 type CatalogOption = { value: string; label: string };
+type ItemCatalog = {
+  itens: CatalogOption[];
+  unidades: CatalogOption[];
+  condicoesPagamento: CatalogOption[];
+  formasPagamento: CatalogOption[];
+  depositos: CatalogOption[];
+  centrosCusto: CatalogOption[];
+  utilizacoes: CatalogOption[];
+  moedas: CatalogOption[];
+};
+
+type ItemDraft = {
+  itemId: string;
+  undMedidaId: string;
+  valorUnitario: string;
+  quantidade: string;
+  valorComissao: string;
+  prazoEntrega: string;
+  condicaoPagamentoId: string;
+  depositoId: string;
+  centroCustoId: string;
+  utilizacaoId: string;
+  moedaId: string;
+};
+
+type ItemRow = {
+  itemId: string;
+  item: string;
+  undMedidaId: string;
+  undMedida: string;
+  valorUnitario: string;
+  quantidade: string;
+  valorTotal: string;
+  valorComissao: string;
+  prazoEntrega: string;
+  condicaoPagamentoId: string;
+  condicaoPagamento: string;
+  depositoId: string;
+  deposito: string;
+  centroCustoId: string;
+  centroCusto: string;
+  utilizacaoId: string;
+  utilizacao: string;
+  moedaId: string;
+  moeda: string;
+};
+
+type FinanceiroRow = {
+  descricao: string;
+  data: string;
+  valor: string;
+  taxaJuros: string;
+  diasReferencia: string;
+  condicaoPagamento: string;
+  formaPagamento: string;
+};
+
+type ClausulaCatalogoItem = {
+  id: string;
+  codigo: string;
+  titulo: string;
+};
+
+type ModeloClausulaDetalhe = {
+  id: string;
+  codigo: string;
+  titulo: string;
+  clausulas: Array<{
+    codigo: string;
+    referencia: string;
+    descricao: string;
+  }>;
+};
 
 type BasicForm = {
+  tipoContrato: "saida_insumos" | "entrada_insumos";
   empresaId: string;
   exercicio: string;
   numero: string;
   parceiroId: string;
+  contratoCedenteId: string;
+  contratoAnteriorId: string;
+  contratoPermutaId: string;
   referenciaContrato: string;
   inicioEm: string;
   vencimentoEm: string;
   assinaturaEm: string;
   prazoEntregaEm: string;
+  permuta: boolean;
+  aditivo: boolean;
+  tipoAditivo: "nenhum" | "valor" | "prazo" | "quantidade" | "misto";
   valor: string;
+  valorMaoObra: string;
+  responsavelFrete: "empresa" | "parceiro" | "terceiro";
+  calculoFrete: "fixo" | "por_tonelada" | "por_unidade" | "por_km" | "sem_frete" | "km_rodado" | "peso";
+  valorUnitarioFrete: string;
+  emissorNotaId: string;
+  comissionadoId: string;
+  valorComissao: string;
   assinaturaParceiro: string;
   assinaturaEmpresa: string;
   responsavelJuridicoNome: string;
@@ -63,6 +150,48 @@ type ContratoLoadResponse = {
   previsoes?: Record<string, unknown>[];
 };
 
+type ContratoListResponse = {
+  items?: Array<{
+    id?: number | string | null;
+    numero?: string | number | null;
+    referenciaContrato?: string | null;
+    parceiro?: string | null;
+    tipoContrato?: string | null;
+  }>;
+};
+
+type EntradaSaidaForm = {
+  periodoProducao: string;
+  fazenda: string;
+  distanciaRaioKm: string;
+  programacaoRetirada: string;
+  programacaoPagamento: string;
+};
+
+type AnaliseRow = {
+  tipoAnalise: string;
+  valorMaximo: string;
+};
+
+const EMPTY_ITEM_CATALOG: ItemCatalog = {
+  itens: [],
+  unidades: [],
+  condicoesPagamento: [],
+  formasPagamento: [],
+  depositos: [],
+  centrosCusto: [],
+  utilizacoes: [],
+  moedas: [],
+};
+
+const FORMA_PAGAMENTO_FALLBACK: CatalogOption[] = [
+  { value: "BOLETO", label: "BOLETO" },
+  { value: "TRANSFERENCIA", label: "TRANSFERÊNCIA" },
+  { value: "PIX", label: "PIX" },
+  { value: "DINHEIRO", label: "DINHEIRO" },
+  { value: "CARTAO", label: "CARTÃO" },
+];
+
 const STATUS_STEPS: Array<{ value: ContratoStatus; label: string }> = [
   { value: "aguardando_aprovacao", label: "Aguardando Aprovação" },
   { value: "ativo", label: "Ativo" },
@@ -77,14 +206,71 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "frete", label: "Frete" },
   { key: "financeiro", label: "Financeiro" },
   { key: "notas", label: "Notas" },
-  { key: "clausulas", label: "clausulas" },
-  { key: "previsoes", label: "previsoes" },
+  { key: "clausulas", label: "Cláusulas" },
+  { key: "previsoes", label: "Previsões" },
   { key: "entrada_saida", label: "Entrada/Saída de Insumos" },
   { key: "sap_b1", label: "SAP B1" },
 ];
 
+const RESPONSAVEL_FRETE_OPTIONS: Array<{ value: BasicForm["responsavelFrete"]; label: string }> = [
+  { value: "empresa", label: "Empresa" },
+  { value: "parceiro", label: "Parceiro" },
+  { value: "terceiro", label: "Terceiro" },
+];
+
+const CALCULO_FRETE_OPTIONS: Array<{ value: BasicForm["calculoFrete"]; label: string }> = [
+  { value: "km_rodado", label: "KM rodado" },
+  { value: "peso", label: "Peso" },
+  { value: "fixo", label: "Fixo" },
+  { value: "por_km", label: "Por KM" },
+  { value: "por_tonelada", label: "Por tonelada" },
+  { value: "por_unidade", label: "Por unidade" },
+  { value: "sem_frete", label: "Sem frete" },
+];
+
+const TIPO_ADITIVO_OPTIONS: Array<{ value: BasicForm["tipoAditivo"]; label: string }> = [
+  { value: "nenhum", label: "Nenhum" },
+  { value: "valor", label: "Valor" },
+  { value: "prazo", label: "Prazo" },
+  { value: "quantidade", label: "Quantidade" },
+  { value: "misto", label: "Misto" },
+];
+
+const TIPO_CONTRATO_OPTIONS: Array<{ value: BasicForm["tipoContrato"]; label: string }> = [
+  { value: "saida_insumos", label: "Saída de Insumos" },
+  { value: "entrada_insumos", label: "Entrada de Insumos" },
+];
+
+const PERIODO_PRODUCAO_OPTIONS = ["None", "Agrícola"];
+
+const ANALISE_TIPO_OPTIONS = [
+  "UMIDADE (FOB) ATÉ 14%",
+  "IMPUREZA (FOB) ATÉ 1%",
+  "AVARIADO (FOB) ATÉ 6%",
+  "IMPUREZA (CIF) ATÉ 1%",
+  "AVARIADO (CIF) ATÉ 6%",
+  "UMIDADE SORGO E MILHETO (FOB) - ATÉ 13%",
+  "UMIDADE SORGO E MILHETO (CIF) - ATÉ 13%",
+  "MATÉRIA SECA (FOB)",
+  "NDT",
+  "PB",
+  "EE",
+  "FDN",
+  "UMIDADE (CIF) ATÉ 14%",
+  "PDR",
+  "CA",
+  "P",
+  "MS",
+  "MATÉRIA SECA (CIF)",
+];
+
 export default function NovoContratoSaidaInsumosPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const tipoContratoFixo: BasicForm["tipoContrato"] = pathname.includes("/entrada-insumos")
+    ? "entrada_insumos"
+    : "saida_insumos";
+  const basePath = tipoContratoFixo === "entrada_insumos" ? "/contratos/entrada-insumos" : "/contratos/saida-insumos";
   const [editingContratoId, setEditingContratoId] = useState<number | null>(null);
   const isEditMode = editingContratoId !== null;
   const [activeTab, setActiveTab] = useState<TabKey>("dados");
@@ -106,35 +292,86 @@ export default function NovoContratoSaidaInsumosPage() {
   const [empresaSearch, setEmpresaSearch] = useState("");
   const [parceiros, setParceiros] = useState<ParceiroOption[]>([]);
   const [parceiroSearch, setParceiroSearch] = useState("");
+  const [contratosRelacionados, setContratosRelacionados] = useState<CatalogOption[]>([]);
+  const [contratosRelacionadosSearch, setContratosRelacionadosSearch] = useState("");
+  const [loadingContratosRelacionados, setLoadingContratosRelacionados] = useState(false);
   const parceiroCatalogOptions = useMemo(
     () =>
       parceiros.map((parceiro) => ({
         value: String(parceiro.id),
-        label: `${parceiro.codigo ?? "SEM-COD"} - ${parceiro.nome}${parceiro.documento ? ` - ${formatCpfCnpj(parceiro.documento)}` : ""}`,
+        label: `${parceiro.codigo ?? "SEM-CÓD"} - ${parceiro.nome}${parceiro.documento ? ` - ${formatCpfCnpj(parceiro.documento)}` : ""}`,
       })),
     [parceiros],
   );
+  const empresaCatalogOptions = useMemo(
+    () =>
+      empresas.map((empresa) => ({
+        value: String(empresa.id),
+        label: `${empresa.codigo ?? "SEM-CÓD"} - ${empresa.nome}`,
+      })),
+    [empresas],
+  );
+  const [itemCatalog, setItemCatalog] = useState<ItemCatalog>(EMPTY_ITEM_CATALOG);
+  const [baseItemOptions, setBaseItemOptions] = useState<CatalogOption[]>([]);
+  const [itemSearch, setItemSearch] = useState("");
+  const [loadingItensSap, setLoadingItensSap] = useState(false);
+  const [itemDraft, setItemDraft] = useState<ItemDraft>(createEmptyItemDraft(EMPTY_ITEM_CATALOG));
+  const [itemSelecionados, setItemSelecionados] = useState<number[]>([]);
+  const [parceiroFormaPagamentoOptions, setParceiroFormaPagamentoOptions] = useState<CatalogOption[]>([]);
+  const formaPagamentoOptions = useMemo(
+    () =>
+      normalizeCatalogOptions([
+        ...parceiroFormaPagamentoOptions,
+        ...(itemCatalog.formasPagamento.length > 0 ? itemCatalog.formasPagamento : FORMA_PAGAMENTO_FALLBACK),
+      ]),
+    [itemCatalog.formasPagamento, parceiroFormaPagamentoOptions],
+  );
+  const [clausulasCatalogo, setClausulasCatalogo] = useState<ClausulaCatalogoItem[]>([]);
 
-  const [itens, setItens] = useState<Record<string, string>[]>([]);
+  const [itens, setItens] = useState<ItemRow[]>([]);
   const [fretes, setFretes] = useState<Record<string, string>[]>([]);
-  const [financeiros, setFinanceiros] = useState<Record<string, string>[]>([]);
+  const [financeiros, setFinanceiros] = useState<FinanceiroRow[]>([]);
   const [notas, setNotas] = useState<Record<string, string>[]>([]);
   const [clausulas, setClausulas] = useState<Record<string, string>[]>([]);
+  const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
+  const [editingClausulaIndex, setEditingClausulaIndex] = useState<number | null>(null);
   const [previsoes, setPrevisoes] = useState<Record<string, string>[]>([]);
+  const [entradaSaida, setEntradaSaida] = useState<EntradaSaidaForm>({
+    periodoProducao: "",
+    fazenda: "",
+    distanciaRaioKm: "0,00",
+    programacaoRetirada: "",
+    programacaoPagamento: "",
+  });
+  const [analises, setAnalises] = useState<AnaliseRow[]>([]);
   const [clausulaCodigo, setClausulaCodigo] = useState("");
   const [clausulaTitulo, setClausulaTitulo] = useState("");
 
   const [form, setForm] = useState<BasicForm>({
+    tipoContrato: tipoContratoFixo,
     empresaId: "",
     exercicio: String(new Date().getFullYear()),
     numero: "",
     parceiroId: "",
+    contratoCedenteId: "",
+    contratoAnteriorId: "",
+    contratoPermutaId: "",
     referenciaContrato: "",
     inicioEm: "",
     vencimentoEm: "",
     assinaturaEm: "",
     prazoEntregaEm: "",
+    permuta: false,
+    aditivo: false,
+    tipoAditivo: "nenhum",
     valor: "",
+    valorMaoObra: "0,00",
+    responsavelFrete: "empresa",
+    calculoFrete: "km_rodado",
+    valorUnitarioFrete: "0,00",
+    emissorNotaId: "",
+    comissionadoId: "",
+    valorComissao: "0,00",
     assinaturaParceiro: "VENDEDOR(a)",
     assinaturaEmpresa: "COMPRADOR",
     responsavelJuridicoNome: RESPONSAVEL_JURIDICO_FIXO,
@@ -208,7 +445,7 @@ export default function NovoContratoSaidaInsumosPage() {
       try {
         const term = parceiroSearch.trim();
         const params = new URLSearchParams();
-        params.set("limit", term.length >= 2 ? "200" : "80");
+        params.set("limit", term.length >= 2 ? "5000" : "1500");
         if (term) params.set("search", term);
         const parceirosUrl = `/api/cadastros/parceiros?${params.toString()}`;
         if (typeof window !== "undefined") {
@@ -222,13 +459,17 @@ export default function NovoContratoSaidaInsumosPage() {
         const data = (await response.json()) as ParceiroOption[];
         if (active) {
           setParceiros((prev) => {
-            const selectedId = String(form.parceiroId ?? "").trim();
-            if (!selectedId) return data;
-            const selectedFromPrev = prev.find(
-              (item) => String(item.id) === selectedId && !data.some((next) => next.id === item.id),
+            if (term) return data;
+            const selectedIds = new Set(
+              [form.parceiroId, form.emissorNotaId, form.comissionadoId, draft.transportadorId]
+                .map((item) => String(item ?? "").trim())
+                .filter((item) => item.length > 0),
             );
-            if (!selectedFromPrev) return data;
-            return [selectedFromPrev, ...data];
+            const selectedFromPrev = prev.filter(
+              (item) => selectedIds.has(String(item.id)) && !data.some((next) => next.id === item.id),
+            );
+            if (selectedFromPrev.length === 0) return data;
+            return [...selectedFromPrev, ...data];
           });
         }
       } catch (loadError) {
@@ -243,7 +484,96 @@ export default function NovoContratoSaidaInsumosPage() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [form.parceiroId, parceiroSearch]);
+  }, [draft.transportadorId, form.comissionadoId, form.emissorNotaId, form.parceiroId, parceiroSearch]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoadingContratosRelacionados(true);
+      try {
+        const params = new URLSearchParams();
+        params.set("page", "1");
+        params.set("pageSize", "300");
+        const term = contratosRelacionadosSearch.trim();
+        if (term) params.set("search", term);
+        const [entradaResponse, saidaResponse] = await Promise.all([
+          fetch(`/api/contratos/entrada-animais?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+          fetch(`/api/contratos/saida-insumos?${params.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+          }),
+        ]);
+        if (!entradaResponse.ok || !saidaResponse.ok) {
+          throw new Error("Falha ao carregar lista de contratos relacionados.");
+        }
+        const [entradaData, saidaData] = (await Promise.all([
+          entradaResponse.json(),
+          saidaResponse.json(),
+        ])) as [ContratoListResponse, ContratoListResponse];
+        if (!active) return;
+        const allItems = [...(entradaData.items ?? []), ...(saidaData.items ?? [])];
+        const fetched = allItems
+          .map((item) => {
+            const id = String(item.id ?? "").trim();
+            if (!id) return null;
+            const numero = String(item.numero ?? "").trim();
+            const referencia = String(item.referenciaContrato ?? "").trim();
+            const parceiro = String(item.parceiro ?? "").trim();
+            const tipo = normalizeSearchTerm(String(item.tipoContrato ?? "")).includes("entrada")
+              ? "ENTRADA"
+              : normalizeSearchTerm(String(item.tipoContrato ?? "")).includes("saida")
+                ? "SAÍDA"
+                : "CONTRATO";
+            const base = [tipo, `#${id}`, numero || "S/N", referencia || "Sem referência"];
+            if (parceiro) base.push(parceiro);
+            return {
+              value: id,
+              label: base.join(" | "),
+            };
+          })
+          .filter((item): item is CatalogOption => item !== null)
+          .filter((item) => !editingContratoId || item.value !== String(editingContratoId));
+
+        setContratosRelacionados((prev) => {
+          const selectedIds = [form.contratoPermutaId, form.contratoCedenteId, form.contratoAnteriorId]
+            .map((item) => String(item ?? "").trim())
+            .filter((item) => item.length > 0);
+
+          const selectedFallback = selectedIds.map((id) => {
+            const fromFetched = fetched.find((option) => option.value === id);
+            if (fromFetched) return fromFetched;
+            const fromPrev = prev.find((option) => option.value === id);
+            if (fromPrev) return fromPrev;
+            return { value: id, label: `#${id}` };
+          });
+
+          return normalizeCatalogOptions([...selectedFallback, ...fetched]);
+        });
+      } catch (loadError) {
+        if (!active) return;
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setError(loadError instanceof Error ? loadError.message : "Falha ao carregar contratos relacionados.");
+      } finally {
+        if (active) setLoadingContratosRelacionados(false);
+      }
+    }, 220);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [
+    contratosRelacionadosSearch,
+    editingContratoId,
+    form.contratoAnteriorId,
+    form.contratoCedenteId,
+    form.contratoPermutaId,
+  ]);
 
   function openPnPicker(target: PnPickerTarget) {
     setPnPickerTarget(target);
@@ -258,9 +588,185 @@ export default function NovoContratoSaidaInsumosPage() {
     if (pnPickerTarget === "parceiro") {
       setForm((prev) => ({ ...prev, parceiroId: String(option.id) }));
       setParceiros((prev) => upsertParceiroOption(prev, option));
+    } else if (pnPickerTarget === "comissionado") {
+      setForm((prev) => ({ ...prev, comissionadoId: String(option.id) }));
+      setParceiros((prev) => upsertParceiroOption(prev, option));
+    } else if (pnPickerTarget === "emissor") {
+      setForm((prev) => ({ ...prev, emissorNotaId: String(option.id) }));
+      setParceiros((prev) => upsertParceiroOption(prev, option));
+    } else if (pnPickerTarget === "transportador") {
+      setDraft((prev) => ({ ...prev, transportadorId: String(option.id) }));
+      setParceiros((prev) => upsertParceiroOption(prev, option));
     }
     closePnPicker();
   }
+
+  useEffect(() => {
+    let active = true;
+    async function loadItemCatalog() {
+      try {
+        const response = await fetch("/api/cadastros/contratos/item-opcoes", { cache: "no-store" });
+        if (!response.ok) throw new Error("Falha ao carregar opções da aba de itens.");
+        const data = (await response.json()) as Partial<ItemCatalog>;
+        if (!active) return;
+        const normalized = normalizeItemCatalog(data);
+        setBaseItemOptions(normalized.itens);
+        setItemCatalog(normalized);
+        setItemDraft((prev) => hydrateItemDraft(prev, normalized));
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Falha ao carregar opções da aba de itens.");
+      }
+    }
+    loadItemCatalog().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadClausulasCatalogo() {
+      try {
+        const response = await fetch("/api/cadastros/contratos/modelos-clausulas", { cache: "no-store" });
+        if (!response.ok) throw new Error("Falha ao carregar modelos de cláusulas.");
+        const data = (await response.json()) as ClausulaCatalogoItem[];
+        if (!active) return;
+        setClausulasCatalogo(sortClausulasCatalogo(data));
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Falha ao carregar modelos de cláusulas.");
+      }
+    }
+    loadClausulasCatalogo().catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (modalType !== "financeiro") {
+      setParceiroFormaPagamentoOptions([]);
+      return;
+    }
+    if (!form.parceiroId) {
+      setParceiroFormaPagamentoOptions([]);
+      return;
+    }
+
+    const parceiroSelecionado = parceiros.find((item) => String(item.id) === form.parceiroId);
+    const referencia =
+      parceiroSelecionado?.sapExternalId?.trim() ||
+      parceiroSelecionado?.codigo?.trim() ||
+      parceiroSelecionado?.nome?.trim() ||
+      "";
+    if (!referencia) return;
+
+    let active = true;
+    const controller = new AbortController();
+    setParceiroFormaPagamentoOptions([]);
+
+    async function loadParceiroFinanceiroPadrao() {
+      try {
+        const params = new URLSearchParams({ referencia });
+        const response = await fetch(`/api/cadastros/parceiros/financeiro?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          condicaoPagamento?: string;
+          formaPagamento?: string;
+          formasPagamento?: CatalogOption[];
+        };
+        if (!active) return;
+        const formasPagamento = normalizeCatalogOptions(payload.formasPagamento);
+        setParceiroFormaPagamentoOptions(formasPagamento);
+        setDraft((prev) => {
+          const hasCondicao = (prev.condicaoPagamento ?? "").trim().length > 0;
+          const hasForma = (prev.formaPagamento ?? "").trim().length > 0;
+          return {
+            ...prev,
+            condicaoPagamento: hasCondicao ? prev.condicaoPagamento ?? "" : (payload.condicaoPagamento ?? "").trim(),
+            formaPagamento: hasForma ? prev.formaPagamento ?? "" : (payload.formaPagamento ?? "").trim(),
+          };
+        });
+      } catch (loadError) {
+        if (!active) return;
+        if ((loadError as { name?: string })?.name === "AbortError") return;
+      }
+    }
+
+    loadParceiroFinanceiroPadrao().catch(() => undefined);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [form.parceiroId, modalType, parceiros]);
+
+  useEffect(() => {
+    if (modalType !== "item") return;
+    const term = itemSearch.trim();
+    if (!term) {
+      setItemCatalog((prev) => {
+        const selectedFromPrev = prev.itens.find((option) => option.value === itemDraft.itemId);
+        const selectedFromBase = baseItemOptions.find((option) => option.value === itemDraft.itemId);
+        const selected = selectedFromPrev ?? selectedFromBase;
+        return {
+          ...prev,
+          itens: normalizeCatalogOptions([
+            ...(selected ? [selected] : []),
+            ...baseItemOptions,
+          ]),
+        };
+      });
+      setLoadingItensSap(false);
+      return;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoadingItensSap(true);
+      try {
+        const params = new URLSearchParams();
+        params.set("itemSearch", term);
+        params.set("limit", "all");
+        const response = await fetch(`/api/cadastros/contratos/item-opcoes?${params.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Falha ao pesquisar itens no SAP.");
+        const data = (await response.json()) as Partial<ItemCatalog>;
+        if (!active) return;
+        const itensEncontrados = normalizeCatalogOptions(data.itens);
+        setItemCatalog((prev) => {
+          const selectedFromPrev = prev.itens.find((option) => option.value === itemDraft.itemId);
+          const selectedFromBase = baseItemOptions.find((option) => option.value === itemDraft.itemId);
+          const selected = selectedFromPrev ?? selectedFromBase;
+          return {
+            ...prev,
+            itens: normalizeCatalogOptions([
+              ...(selected ? [selected] : []),
+              ...itensEncontrados,
+            ]),
+          };
+        });
+      } catch (loadError) {
+        if (!active) return;
+        if ((loadError as { name?: string })?.name === "AbortError") return;
+        setError(loadError instanceof Error ? loadError.message : "Falha ao pesquisar itens.");
+      } finally {
+        if (active) setLoadingItensSap(false);
+      }
+    }, 180);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [baseItemOptions, itemDraft.itemId, itemSearch, modalType]);
 
   useEffect(() => {
     if (!isEditMode || !editingContratoId || Number.isNaN(editingContratoId)) return;
@@ -307,16 +813,33 @@ export default function NovoContratoSaidaInsumosPage() {
 
         setForm((prev) => ({
           ...prev,
+          tipoContrato:
+            tipoContratoFixo === "entrada_insumos"
+              ? "entrada_insumos"
+              : normalizeTipoContrato(asText(contrato.tp_contrato) || asText(contrato.tipoContrato)),
           empresaId: empresaId ?? empresaSyntheticId ?? prev.empresaId,
           exercicio: asText(contrato.ano) || prev.exercicio,
           numero: asText(contrato.numero) || "",
           parceiroId: parceiroId ?? parceiroSyntheticId ?? "",
+          contratoCedenteId: asPositiveString(contrato.contrato_cedente_id) ?? "",
+          contratoAnteriorId: asPositiveString(contrato.contrato_anterior_id) ?? "",
+          contratoPermutaId: asPositiveString(contrato.contrato_permuta_id) ?? "",
           referenciaContrato: asText(contrato.descricao) || "",
           inicioEm: toDateInputValue(contrato.dt_inicio),
           vencimentoEm: toDateInputValue(contrato.dt_vencimento),
           assinaturaEm: toDateInputValue(contrato.dt_assinatura),
           prazoEntregaEm: toDateInputValue(contrato.prazo_entrega),
+          permuta: asBoolean(contrato.permuta),
+          aditivo: asBoolean(contrato.aditivo),
+          tipoAditivo: "nenhum",
           valor: formatCurrencyFromUnknown(contrato.vl),
+          valorMaoObra: formatCurrencyFromUnknown(contrato.vl_mao_obra),
+          responsavelFrete: normalizeResponsavelFrete(asText(contrato.frete)),
+          calculoFrete: normalizeCalculoFrete(asText(contrato.calculo_frete)),
+          valorUnitarioFrete: formatCurrencyFromUnknown(contrato.vl_unit_frete),
+          emissorNotaId: asPositiveString(contrato.emissorNotaId) ?? asPositiveString(contrato.emissor_nota_id) ?? "",
+          comissionadoId: asPositiveString(contrato.comissionadoId) ?? asPositiveString(contrato.comissionado_id) ?? "",
+          valorComissao: formatCurrencyFromUnknown(contrato.vl_comissao),
           assinaturaParceiro: asText(contrato.assinatura_parceiro) || "VENDEDOR(a)",
           assinaturaEmpresa: asText(contrato.assinatura_empresa) || "COMPRADOR",
           responsavelJuridicoNome: asText(contrato.responsavel_juridico) || RESPONSAVEL_JURIDICO_FIXO,
@@ -328,12 +851,45 @@ export default function NovoContratoSaidaInsumosPage() {
           execucao: asText(contrato.execucao) || "",
         }));
 
-        setItens((payload.itens ?? []).map(mapGenericRowFromApi));
+        setItens((payload.itens ?? []).map((row) => mapItemRowFromApi(row, EMPTY_ITEM_CATALOG)));
+        setItemSelecionados([]);
         setFretes((payload.fretes ?? []).map(mapGenericRowFromApi));
-        setFinanceiros((payload.financeiro ?? []).map(mapGenericRowFromApi));
+        setFinanceiros((payload.financeiro ?? []).map((row) => mapFinanceiroRowFromApi(row)));
         setNotas((payload.notas ?? []).map(mapGenericRowFromApi));
         setClausulas((payload.clausulas ?? []).map(mapGenericRowFromApi));
-        setPrevisoes((payload.previsoes ?? []).map(mapGenericRowFromApi));
+        setPrevisoes((payload.previsoes ?? []).map(mapPrevisaoRowFromApi));
+        setClausulaCodigo(
+          asPositiveString(contrato.clausulaModeloId) ??
+            asPositiveString(contrato.clausula_id) ??
+            "",
+        );
+        setClausulaTitulo(
+          asText(contrato.clausulaTitulo) ||
+            asText(contrato.titulo_clausula) ||
+            "",
+        );
+
+        const dadosGerais = asObject(contrato.dadosGerais);
+        setEntradaSaida({
+          periodoProducao: asText(dadosGerais.periodoProducao),
+          fazenda: asText(dadosGerais.fazenda),
+          distanciaRaioKm: formatCurrencyFromUnknown(dadosGerais.distanciaRaioKm),
+          programacaoRetirada: asText(dadosGerais.programacaoRetirada),
+          programacaoPagamento: asText(dadosGerais.programacaoPagamento),
+        });
+        setAnalises(
+          Array.isArray(dadosGerais.analises)
+            ? dadosGerais.analises
+                .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+                .map((item) => {
+                  const row = item as Record<string, unknown>;
+                  return {
+                    tipoAnalise: asText(row.tipoAnalise),
+                    valorMaximo: formatCurrencyFromUnknown(row.valorMaximo),
+                  };
+                })
+            : [],
+        );
 
         const parceiroOptionId = parceiroId ?? parceiroSyntheticId;
         const parceiroSnapshot: ParceiroOption | null =
@@ -416,26 +972,361 @@ export default function NovoContratoSaidaInsumosPage() {
     return (await response.json()) as ParceiroOption;
   }
 
-  function openModal(type: ModalType) {
-    setError("");
-    setModalType(type);
-    if (type === "item") setDraft({ item: "", und: "TON", valorUnitario: "0,00", quantidade: "0,00", prazoEntrega: "", condicaoPagamento: "", deposito: "", centroCusto: "", utilizAção: "", moeda: "BRL", valorComissao: "0,00" });
-    if (type === "frete") setDraft({ frete: "CIF", transportador: "", cpfMotorista: "", observacao: "", valor: "0,00", qtd: "0,00", qtdChegada: "0,00", km: "0,00", dataEmbarque: "", dataEntrega: "", equipamento: "" });
-    if (type === "financeiro") setDraft({ descricao: "", data: "", valor: "0,00", taxaJuros: "0,00", diasReferencia: "", condicaoPagamento: "", formaPagamento: "" });
-    if (type === "nota") setDraft({ nf: "" });
-    if (type === "previsao") setDraft({ dataInicio: "", descricao: "", valor: "0,00" });
+  async function ensureParceiroFieldId(selectedId: string): Promise<string> {
+    const trimmed = String(selectedId ?? "").trim();
+    if (!trimmed) return "";
+    const parceiroSelecionado = parceiros.find((item) => String(item.id) === trimmed);
+    if (!parceiroSelecionado?.sapOnly) return trimmed;
+    const ensured = await ensureSapParceiroCache(parceiroSelecionado);
+    setParceiros((prev) => upsertParceiroOption(prev, ensured));
+    return String(ensured.id);
   }
 
-  function saveModal() {
+  function openModal(type: ModalType) {
+    setError("");
+    setEditingClausulaIndex(null);
+    setEditingItemIndex(null);
+    setModalType(type);
+    if (type === "item") {
+      setItemSearch("");
+      setLoadingItensSap(false);
+      setItemCatalog((prev) => ({ ...prev, itens: baseItemOptions.length > 0 ? baseItemOptions : prev.itens }));
+      setItemDraft(createEmptyItemDraft(itemCatalog));
+    }
+    if (type === "frete") {
+      setDraft({
+        frete: "CIF",
+        transportadorId: "",
+        transportador: "",
+        placa: "",
+        motorista: "",
+        cpfMotorista: "",
+        observacao: "",
+        valor: "0,00",
+        qtd: "0,00",
+        qtdChegada: "0,00",
+        km: "0,00",
+        dataEmbarque: "",
+        dataEntrega: "",
+        equipamentoId: "",
+        equipamento: "",
+      });
+    }
+    if (type === "financeiro") {
+      setDraft({
+        descricao: "",
+        data: "",
+        valor: "0,00",
+        taxaJuros: "0,00",
+        diasReferencia: "",
+        condicaoPagamento: "",
+        formaPagamento: "",
+      });
+    }
+    if (type === "nota") setDraft({ nf: "" });
+    if (type === "previsao") setDraft({ dataInicio: "", quantidade: "0,00" });
+    if (type === "analise") setDraft({ tipoAnalise: "", valorMaximo: "0,00" });
+    if (type === "clausula") {
+      setEditingClausulaIndex(null);
+      setDraft({
+        codigo: "",
+        referencia: clausulaTitulo.trim(),
+        descricao: "",
+      });
+    }
+  }
+
+  async function saveModal() {
     if (!modalType) return;
-    if (modalType === "item") return setItens((prev) => [...prev, { ...draft, valorTotal: toDecimal(parseDecimal(draft.valorUnitario) * parseDecimal(draft.quantidade)) }]), setModalType(null);
-    if (modalType === "frete") return setFretes((prev) => [...prev, draft]), setModalType(null);
-    if (modalType === "financeiro") return setFinanceiros((prev) => [...prev, draft]), setModalType(null);
+    if (modalType === "item") {
+      const valorUnitario = parseDecimal(itemDraft.valorUnitario);
+      const quantidade = parseDecimal(itemDraft.quantidade);
+      const valorComissao = parseDecimal(itemDraft.valorComissao);
+      const valorTotal = valorUnitario * quantidade;
+      const currentItemRow = editingItemIndex !== null ? itens[editingItemIndex] : null;
+      const selectedItemLabel =
+        optionLabelByItemValue(itemCatalog.itens, itemDraft.itemId) ||
+        optionLabelByItemValue(baseItemOptions, itemDraft.itemId) ||
+        currentItemRow?.item ||
+        itemDraft.itemId;
+
+      const row: ItemRow = {
+        itemId: itemDraft.itemId,
+        item: normalizeItemDisplayLabel(selectedItemLabel),
+        undMedidaId: itemDraft.undMedidaId,
+        undMedida: optionLabel(itemCatalog.unidades, itemDraft.undMedidaId),
+        valorUnitario: toDecimal(valorUnitario),
+        quantidade: toDecimal(quantidade),
+        valorTotal: toDecimal(valorTotal),
+        valorComissao: toDecimal(valorComissao),
+        prazoEntrega: itemDraft.prazoEntrega,
+        condicaoPagamentoId: itemDraft.condicaoPagamentoId,
+        condicaoPagamento: optionLabel(itemCatalog.condicoesPagamento, itemDraft.condicaoPagamentoId),
+        depositoId: itemDraft.depositoId,
+        deposito: optionLabel(itemCatalog.depositos, itemDraft.depositoId),
+        centroCustoId: itemDraft.centroCustoId,
+        centroCusto: optionLabel(itemCatalog.centrosCusto, itemDraft.centroCustoId),
+        utilizacaoId: itemDraft.utilizacaoId,
+        utilizacao: optionLabel(itemCatalog.utilizacoes, itemDraft.utilizacaoId),
+        moedaId: itemDraft.moedaId,
+        moeda: optionLabel(itemCatalog.moedas, itemDraft.moedaId),
+      };
+
+      setItens((prev) => {
+        if (editingItemIndex === null) return [...prev, row];
+        if (editingItemIndex < 0 || editingItemIndex >= prev.length) return [...prev, row];
+        return prev.map((item, index) => (index === editingItemIndex ? row : item));
+      });
+      setEditingItemIndex(null);
+      setItemSelecionados([]);
+      setModalType(null);
+      return;
+    }
+    if (modalType === "frete") {
+      const transportadorSelecionado = parceiroCatalogOptions.find((option) => option.value === draft.transportadorId);
+      const equipamentoSelecionado = itemCatalog.itens.find((option) => option.value === draft.equipamentoId);
+      const row = {
+        ...draft,
+        transportador: transportadorSelecionado?.label ?? draft.transportador ?? "",
+        equipamento: equipamentoSelecionado?.label ?? draft.equipamento ?? "",
+      };
+      setFretes((prev) => [...prev, row]);
+      setModalType(null);
+      return;
+    }
+    if (modalType === "financeiro") {
+      const row: FinanceiroRow = {
+        descricao: draft.descricao?.trim() ?? "",
+        data: draft.data ?? "",
+        valor: draft.valor ?? "0,00",
+        taxaJuros: draft.taxaJuros ?? "0,00",
+        diasReferencia: draft.diasReferencia ?? "",
+        condicaoPagamento: draft.condicaoPagamento?.trim() ?? "",
+        formaPagamento: draft.formaPagamento?.trim() ?? "",
+      };
+      setFinanceiros((prev) => [...prev, row]);
+      setModalType(null);
+      return;
+    }
+    if (modalType === "clausula") {
+      const descricao = (draft.descricao ?? "").trim();
+      if (!descricao) {
+        setError("Informe a descrição da cláusula.");
+        return;
+      }
+      const row = {
+        codigo: (draft.codigo ?? "").trim(),
+        referencia: (draft.referencia ?? "").trim() || clausulaTitulo.trim(),
+        descricao,
+      };
+      setClausulas((prev) => {
+        const next = [...prev];
+        if (editingClausulaIndex !== null && editingClausulaIndex >= 0 && editingClausulaIndex < next.length) {
+          next[editingClausulaIndex] = row;
+        } else {
+          next.push(row);
+        }
+        return sortClausulasRows(next);
+      });
+      setEditingClausulaIndex(null);
+      setModalType(null);
+      return;
+    }
     if (modalType === "nota") {
       if (!draft.nf?.trim()) return setError("Informe a NF.");
       return setNotas((prev) => [...prev, draft]), setModalType(null);
     }
-    if (modalType === "previsao") return setPrevisoes((prev) => [...prev, draft]), setModalType(null);
+    if (modalType === "previsao") {
+      if (!draft.dataInicio?.trim()) return setError("Informe a data de início.");
+      return setPrevisoes((prev) => [...prev, { dataInicio: draft.dataInicio, quantidade: draft.quantidade ?? "0,00" }]), setModalType(null);
+    }
+    if (modalType === "analise") {
+      if (!draft.tipoAnalise?.trim()) return setError("Informe o tipo de análise.");
+      return setAnalises((prev) => [...prev, { tipoAnalise: draft.tipoAnalise, valorMaximo: draft.valorMaximo ?? "0,00" }]), setModalType(null);
+    }
+  }
+
+  function toggleItemSelecionado(index: number) {
+    setItemSelecionados((prev) =>
+      prev.includes(index) ? prev.filter((item) => item !== index) : [...prev, index].sort((a, b) => a - b),
+    );
+  }
+
+  function toggleTodosItens(checked: boolean) {
+    if (!checked) {
+      setItemSelecionados([]);
+      return;
+    }
+    setItemSelecionados(itens.map((_, index) => index));
+  }
+
+  function handleEditarItem(index: number) {
+    const row = itens[index];
+    if (!row) return;
+
+    const itemOptions = normalizeCatalogOptions([
+      { value: row.itemId, label: row.item || row.itemId },
+      ...baseItemOptions,
+      ...itemCatalog.itens,
+    ]);
+    const matchedValue = findCatalogValueByItem(itemOptions, row.itemId) ?? row.itemId;
+
+    setError("");
+    setEditingItemIndex(index);
+    setItemSearch("");
+    setLoadingItensSap(false);
+    setBaseItemOptions((prev) =>
+      normalizeCatalogOptions([{ value: matchedValue, label: row.item || row.itemId }, ...prev]),
+    );
+    setItemCatalog((prev) => ({ ...prev, itens: itemOptions }));
+    setItemDraft({
+      itemId: matchedValue,
+      undMedidaId: row.undMedidaId,
+      valorUnitario: row.valorUnitario,
+      quantidade: row.quantidade,
+      valorComissao: row.valorComissao,
+      prazoEntrega: row.prazoEntrega,
+      condicaoPagamentoId: row.condicaoPagamentoId,
+      depositoId: row.depositoId,
+      centroCustoId: row.centroCustoId,
+      utilizacaoId: row.utilizacaoId,
+      moedaId: row.moedaId,
+    });
+    setModalType("item");
+  }
+
+  function handleRemoverItem(index: number) {
+    setItens((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+    setItemSelecionados((prev) =>
+      prev
+        .filter((selectedIndex) => selectedIndex !== index)
+        .map((selectedIndex) => (selectedIndex > index ? selectedIndex - 1 : selectedIndex)),
+    );
+    setEditingItemIndex((prev) => {
+      if (prev === null) return null;
+      if (prev === index) return null;
+      if (prev > index) return prev - 1;
+      return prev;
+    });
+  }
+
+  function handleRemoverItensSelecionados() {
+    if (itemSelecionados.length === 0) return;
+    const selectedSet = new Set(itemSelecionados);
+    setItens((prev) => prev.filter((_, index) => !selectedSet.has(index)));
+    setItemSelecionados([]);
+    setEditingItemIndex(null);
+  }
+
+  async function applyClausulasDoModelo(clausulaId: string, options?: { replace?: boolean }) {
+    const selected = clausulasCatalogo.find((item) => item.id === clausulaId);
+    if (!selected) {
+      setError("Selecione um modelo de contrato.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/cadastros/contratos/modelos-clausulas/${selected.id}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Falha ao carregar cláusulas do modelo selecionado.");
+      }
+
+      const detalhe = (await response.json()) as ModeloClausulaDetalhe;
+      const linhas = Array.isArray(detalhe.clausulas) ? detalhe.clausulas : [];
+      if (linhas.length === 0) {
+        setError("O modelo selecionado não possui cláusulas cadastradas.");
+        return;
+      }
+
+      const referenciaPadrao = clausulaTitulo.trim() || detalhe.titulo || selected.titulo;
+      if (!referenciaPadrao) {
+        setError("Informe o título do contrato para aplicar o modelo.");
+        return;
+      }
+
+      const linhasMapeadas = sortClausulasRows(
+        linhas
+        .map((linha) => ({
+          codigo: String(linha.codigo ?? "").trim(),
+          referencia: String(linha.referencia ?? "").trim() || referenciaPadrao,
+          descricao: String(linha.descricao ?? "").trim(),
+        }))
+        .filter((linha) => linha.descricao.length > 0),
+      );
+
+      if (linhasMapeadas.length === 0) {
+        setError("O modelo selecionado não possui cláusulas válidas para inserção.");
+        return;
+      }
+
+      setClausulaTitulo(referenciaPadrao);
+      if (options?.replace) {
+        setClausulas(linhasMapeadas);
+        return;
+      }
+      setClausulas((prev) => {
+        const seen = new Set(
+          prev.map((row) => `${row.codigo ?? ""}|${row.referencia ?? ""}|${row.descricao ?? ""}`.toUpperCase()),
+        );
+        const merged = [...prev];
+        for (const linha of linhasMapeadas) {
+          const key = `${linha.codigo}|${linha.referencia}|${linha.descricao}`.toUpperCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(linha);
+        }
+        return sortClausulasRows(merged);
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Falha ao inserir cláusulas do modelo.");
+      return;
+    }
+  }
+
+  function handleSelectClausulaCatalogo(clausulaId: string) {
+    setError("");
+    setClausulaCodigo(clausulaId);
+    const selected = clausulasCatalogo.find((item) => item.id === clausulaId);
+    if (selected) {
+      setClausulaTitulo(selected.titulo);
+    }
+    if (!clausulaId) return;
+    void applyClausulasDoModelo(clausulaId, { replace: true });
+  }
+
+  async function handleAddClausulaContrato() {
+    if (!clausulaCodigo) {
+      setError("Selecione um modelo de contrato.");
+      return;
+    }
+    await applyClausulasDoModelo(clausulaCodigo);
+  }
+
+  function handleNovaClausulaContrato() {
+    setError("");
+    setEditingClausulaIndex(null);
+    setDraft({
+      codigo: "",
+      referencia: clausulaTitulo.trim(),
+      descricao: "",
+    });
+    setModalType("clausula");
+  }
+
+  function handleEditarClausulaContrato(index: number) {
+    const row = clausulas[index];
+    if (!row) return;
+    setError("");
+    setEditingClausulaIndex(index);
+    setDraft({
+      codigo: row.codigo ?? "",
+      referencia: row.referencia ?? "",
+      descricao: row.descricao ?? "",
+    });
+    setModalType("clausula");
   }
 
   async function handleSaveContract(options?: { gerarPdf?: boolean }) {
@@ -522,10 +1413,21 @@ export default function NovoContratoSaidaInsumosPage() {
 
     setSaving(true);
     try {
+      const emissorNotaIdResolved = await ensureParceiroFieldId(form.emissorNotaId);
+      const comissionadoIdResolved = await ensureParceiroFieldId(form.comissionadoId);
+      if (emissorNotaIdResolved !== form.emissorNotaId || comissionadoIdResolved !== form.comissionadoId) {
+        setForm((prev) => ({
+          ...prev,
+          emissorNotaId: emissorNotaIdResolved,
+          comissionadoId: comissionadoIdResolved,
+        }));
+      }
+
       const response = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          tipoContrato: form.tipoContrato,
           empresaId,
           empresaSap,
           parceiroId,
@@ -537,7 +1439,20 @@ export default function NovoContratoSaidaInsumosPage() {
           prazoEntregaEm: toOptionalString(form.prazoEntregaEm),
           inicioEm: toOptionalString(form.inicioEm),
           vencimentoEm: toOptionalString(form.vencimentoEm),
+          permuta: form.permuta,
+          contratoPermutaId: toOptionalInt(form.contratoPermutaId),
+          aditivo: form.aditivo,
+          tipoAditivo: form.tipoAditivo,
+          contratoCedenteId: toOptionalInt(form.contratoCedenteId),
+          contratoAnteriorId: toOptionalInt(form.contratoAnteriorId),
           valor: toOptionalNumber(form.valor),
+          valorMaoObra: toOptionalNumber(form.valorMaoObra),
+          responsavelFrete: form.responsavelFrete,
+          calculoFrete: form.calculoFrete,
+          valorUnitarioFrete: toOptionalNumber(form.valorUnitarioFrete),
+          emissorNotaId: toOptionalInt(emissorNotaIdResolved),
+          comissionadoId: toOptionalInt(comissionadoIdResolved),
+          valorComissao: toOptionalNumber(form.valorComissao),
           assinaturaParceiro: toOptionalString(form.assinaturaParceiro),
           assinaturaEmpresa: toOptionalString(form.assinaturaEmpresa),
           responsavelJuridicoNome: toOptionalString(form.responsavelJuridicoNome),
@@ -552,7 +1467,20 @@ export default function NovoContratoSaidaInsumosPage() {
           financeiros,
           notas,
           clausulas,
+          clausulaModeloId: toOptionalInt(clausulaCodigo),
+          clausulaTitulo: toOptionalString(clausulaTitulo),
           previsoes,
+          dadosGerais: {
+            periodoProducao: toOptionalString(entradaSaida.periodoProducao),
+            fazenda: toOptionalString(entradaSaida.fazenda),
+            distanciaRaioKm: toOptionalNumber(entradaSaida.distanciaRaioKm),
+            programacaoRetirada: toOptionalString(entradaSaida.programacaoRetirada),
+            programacaoPagamento: toOptionalString(entradaSaida.programacaoPagamento),
+            analises: analises.map((item) => ({
+              tipoAnalise: toOptionalString(item.tipoAnalise) ?? null,
+              valorMaximo: toOptionalNumber(item.valorMaximo) ?? null,
+            })),
+          },
         }),
       });
       if (!response.ok) {
@@ -566,14 +1494,14 @@ export default function NovoContratoSaidaInsumosPage() {
         setSavedContratoId(contratoId);
         setCurrentStatus(normalizeStatusValue(asText(result?.contrato?.status) || currentStatus));
         setSuccess(method === "POST" ? `Contrato #${contratoId} salvo com sucesso.` : `Contrato #${contratoId} atualizado com sucesso.`);
-        router.replace(`/contratos/saida-insumos/novo?id=${contratoId}`);
+        router.replace(`${basePath}/novo?id=${contratoId}`);
         if (options?.gerarPdf) {
           window.open(`/api/contratos/saida-insumos/${contratoId}/pdf`, "_blank", "noopener,noreferrer");
           return;
         }
         return;
       }
-      router.push("/contratos/saida-insumos");
+      router.push(basePath);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Erro inesperado ao salvar.");
     } finally {
@@ -581,7 +1509,7 @@ export default function NovoContratoSaidaInsumosPage() {
     }
   }
 
-  async function handleChangeStatus(nextStatus: ContratoStatus) {
+  async function handleChangeStatus(nextStatus: ContratoStatus, options?: { gerarPedido?: boolean }) {
     const contratoId = savedContratoId ?? editingContratoId ?? null;
     if (!contratoId || Number.isNaN(contratoId)) {
       setError("Salve o contrato antes de atualizar o status.");
@@ -592,19 +1520,40 @@ export default function NovoContratoSaidaInsumosPage() {
     setSuccess("");
     setStatusUpdating(true);
     try {
+      const shouldGenerate = options?.gerarPedido === true;
       const response = await fetch(`/api/contratos/saida-insumos/${contratoId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: nextStatus }),
+        body: JSON.stringify({
+          status: nextStatus,
+          gerarPedido: shouldGenerate,
+        }),
       });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+        sapPedido?: {
+          docEntry?: number | null;
+          docNum?: number | null;
+          jaExistente?: boolean;
+        } | null;
+      } | null;
 
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? "Falha ao atualizar status.");
       }
 
       setCurrentStatus(nextStatus);
-      setSuccess(`Status atualizado para "${statusLabel(nextStatus)}".`);
+      if (shouldGenerate) {
+        if (body?.sapPedido?.jaExistente) {
+          const docNum = body.sapPedido.docNum ?? body.sapPedido.docEntry ?? null;
+          setSuccess(docNum ? `Pedido SAP ja existente (#${docNum}). Status atualizado.` : "Pedido SAP ja existente. Status atualizado.");
+        } else {
+          const docNum = body?.sapPedido?.docNum ?? body?.sapPedido?.docEntry ?? null;
+          setSuccess(docNum ? `Pedido de compra SAP #${docNum} gerado com sucesso.` : "Pedido de compra SAP gerado com sucesso.");
+        }
+      } else {
+        setSuccess(`Status atualizado para "${statusLabel(nextStatus)}".`);
+      }
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : "Erro inesperado ao atualizar status.");
     } finally {
@@ -616,7 +1565,11 @@ export default function NovoContratoSaidaInsumosPage() {
     <div className="page-shell min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
         <FormPageHeader
-          title={isEditMode ? "Editar Contrato de Saída de Insumos" : "Novo Contrato de Saída de Insumos"}
+          title={
+            isEditMode
+              ? `Editar Contrato de ${tipoContratoLabel(form.tipoContrato)}`
+              : `Novo Contrato de ${tipoContratoLabel(form.tipoContrato)}`
+          }
           subtitle="Use as abas para preencher Dados Básicos, itens, frete, financeiro e validações do contrato."
           backHref="/contratos/saida-insumos"
         />
@@ -624,9 +1577,9 @@ export default function NovoContratoSaidaInsumosPage() {
         <section className="card p-3">
           <div className="legacy-toolbar">
             <div className="legacy-toolbar-left">
-              <h1 className="legacy-title">
-                Contrato de Saída de Insumos / {isEditMode ? `(ID ${editingContratoId})` : "(Novo)"}
-              </h1>
+            <h1 className="legacy-title">
+                Contrato de {tipoContratoLabel(form.tipoContrato)} / {isEditMode ? `(ID ${editingContratoId})` : "(Novo)"}
+            </h1>
               <div className="legacy-actions">
                 <button type="button" className="legacy-btn primary" onClick={() => handleSaveContract()} disabled={saving || loadingOptions || loadingContrato}>{saving ? "Salvando..." : "Salvar"}</button>
                 <Link href="/contratos/saida-insumos" className="legacy-btn">Descartar</Link>
@@ -659,7 +1612,7 @@ export default function NovoContratoSaidaInsumosPage() {
             <button
               type="button"
               className="legacy-btn"
-              onClick={() => handleChangeStatus("ativo")}
+              onClick={() => handleChangeStatus("ativo", { gerarPedido: true })}
               disabled={saving || statusUpdating || loadingContrato}
             >
               {statusUpdating ? "Atualizando..." : "Aprovar/Gerar Pedido"}
@@ -688,7 +1641,26 @@ export default function NovoContratoSaidaInsumosPage() {
                 </div>
                 {loadingEmpresas && <small className="mt-1 block text-xs text-[#6b7394]">Carregando opções...</small>}
               </label>
-              <label className="legacy-field"><span>Tipo Contrato</span><input className="legacy-input" value="Saída de Insumos" disabled /></label>
+              <label className="legacy-field">
+                <span>Tipo de Contrato</span>
+                <select
+                  className="legacy-select"
+                  value={form.tipoContrato}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      tipoContrato: event.target.value as BasicForm["tipoContrato"],
+                    }))
+                  }
+                  disabled={isEditMode || tipoContratoFixo === "entrada_insumos"}
+                >
+                  {TIPO_CONTRATO_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="legacy-field"><span>Exercício</span><input className="legacy-input" value={form.exercicio} readOnly disabled /></label>
               <label className="legacy-field">
                 <span>Número</span>
@@ -719,9 +1691,128 @@ export default function NovoContratoSaidaInsumosPage() {
                 <label className="legacy-field"><span>Vencimento</span><input type="date" className="legacy-input" value={form.vencimentoEm} onChange={(event) => setForm((prev) => ({ ...prev, vencimentoEm: event.target.value }))} /></label>
                 <label className="legacy-field"><span>Assinatura</span><input type="date" className="legacy-input" value={form.assinaturaEm} onChange={(event) => setForm((prev) => ({ ...prev, assinaturaEm: event.target.value }))} /></label>
                 <label className="legacy-field"><span>Prazo Entrega</span><input type="date" className="legacy-input" value={form.prazoEntregaEm} onChange={(event) => setForm((prev) => ({ ...prev, prazoEntregaEm: event.target.value }))} /></label>
+
+                <label className="legacy-field">
+                  <span>Permuta</span>
+                  <div className="legacy-check">
+                    <input
+                      type="checkbox"
+                      checked={form.permuta}
+                      onChange={(event) => setForm((prev) => ({ ...prev, permuta: event.target.checked }))}
+                    />
+                    Indica se o contrato permuta
+                  </div>
+                </label>
+                <CatalogAutocompleteField
+                  label="Contrato Permuta"
+                  options={contratosRelacionados}
+                  value={form.contratoPermutaId}
+                  listId="saida-contrato-permuta-id"
+                  loading={loadingContratosRelacionados}
+                  onSearchTextChange={setContratosRelacionadosSearch}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, contratoPermutaId: value }))}
+                />
+                <label className="legacy-field">
+                  <span>Aditivo</span>
+                  <div className="legacy-check">
+                    <input
+                      type="checkbox"
+                      checked={form.aditivo}
+                      onChange={(event) => setForm((prev) => ({ ...prev, aditivo: event.target.checked }))}
+                    />
+                    Indica se o contrato aditiva
+                  </div>
+                </label>
+                <label className="legacy-field">
+                  <span>Tipo Aditivo</span>
+                  <select
+                    className="legacy-select"
+                    value={form.tipoAditivo}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, tipoAditivo: event.target.value as BasicForm["tipoAditivo"] }))
+                    }
+                  >
+                    {TIPO_ADITIVO_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <CatalogAutocompleteField
+                  label="Contrato Cedente"
+                  options={contratosRelacionados}
+                  value={form.contratoCedenteId}
+                  listId="saida-contrato-cedente-id"
+                  loading={loadingContratosRelacionados}
+                  onSearchTextChange={setContratosRelacionadosSearch}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, contratoCedenteId: value }))}
+                />
+                <CatalogAutocompleteField
+                  label="Contrato Anterior"
+                  options={contratosRelacionados}
+                  value={form.contratoAnteriorId}
+                  listId="saida-contrato-anterior-id"
+                  loading={loadingContratosRelacionados}
+                  onSearchTextChange={setContratosRelacionadosSearch}
+                  onValueChange={(value) => setForm((prev) => ({ ...prev, contratoAnteriorId: value }))}
+                />
                 <label className="legacy-field"><span>Valor</span><input className="legacy-input" value={form.valor} onChange={(event) => setForm((prev) => ({ ...prev, valor: formatCurrencyBr(event.target.value) }))} /></label>
+                <label className="legacy-field"><span>Mão de Obra</span><input className="legacy-input" value={form.valorMaoObra} onChange={(event) => setForm((prev) => ({ ...prev, valorMaoObra: formatCurrencyBr(event.target.value) }))} /></label>
+
+                <label className="legacy-field">
+                  <span>Responsável Frete</span>
+                  <select
+                    className="legacy-select"
+                    value={form.responsavelFrete}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, responsavelFrete: event.target.value as BasicForm["responsavelFrete"] }))
+                    }
+                  >
+                    {RESPONSAVEL_FRETE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="legacy-field">
+                  <span>Cálculo Frete</span>
+                  <select
+                    className="legacy-select"
+                    value={form.calculoFrete}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, calculoFrete: event.target.value as BasicForm["calculoFrete"] }))
+                    }
+                  >
+                    {CALCULO_FRETE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="legacy-field"><span>Valor Unitário Frete</span><input className="legacy-input" value={form.valorUnitarioFrete} onChange={(event) => setForm((prev) => ({ ...prev, valorUnitarioFrete: formatCurrencyBr(event.target.value) }))} /></label>
+
+                <PickerTriggerField
+                  label="Emissor Nota"
+                  className="col-span-2"
+                  valueLabel={optionLabel(parceiroCatalogOptions, form.emissorNotaId)}
+                  onOpen={() => openPnPicker("emissor")}
+                  loading={loadingParceiros}
+                />
                 <label className="legacy-field"><span>Assinatura Parceiro</span><input className="legacy-input" value={form.assinaturaParceiro} onChange={(event) => setForm((prev) => ({ ...prev, assinaturaParceiro: event.target.value }))} /></label>
                 <label className="legacy-field"><span>Assinatura Empresa</span><input className="legacy-input" value={form.assinaturaEmpresa} onChange={(event) => setForm((prev) => ({ ...prev, assinaturaEmpresa: event.target.value }))} /></label>
+                <PickerTriggerField
+                  label="Comissionado"
+                  className="col-span-2"
+                  valueLabel={optionLabel(parceiroCatalogOptions, form.comissionadoId)}
+                  onOpen={() => openPnPicker("comissionado")}
+                  loading={loadingParceiros}
+                />
+                <label className="legacy-field"><span>Valor Comissão</span><input className="legacy-input" value={form.valorComissao} onChange={(event) => setForm((prev) => ({ ...prev, valorComissao: formatCurrencyBr(event.target.value) }))} /></label>
+
                 <h2 className="section-title mt-4 col-span-4">Informações Legais</h2>
                 <label className="legacy-field"><span>Responsável Jurídico</span><input className="legacy-input" value={form.responsavelJuridicoNome} readOnly /></label>
                 <label className="legacy-field"><span>Testemunha</span><input className="legacy-input" value={form.testemunha1Nome} onChange={(event) => setForm((prev) => ({ ...prev, testemunha1Nome: event.target.value }))} /></label>
@@ -733,11 +1824,174 @@ export default function NovoContratoSaidaInsumosPage() {
               </div>
             )}
 
-            {activeTab !== "dados" && activeTab !== "clausulas" && activeTab !== "entrada_saida" && activeTab !== "sap_b1" && (
-              <TabTable onAdd={() => openModal(activeTab === "itens" ? "item" : activeTab === "frete" ? "frete" : activeTab === "financeiro" ? "financeiro" : activeTab === "notas" ? "nota" : "previsao")} rows={activeTab === "itens" ? itens : activeTab === "frete" ? fretes : activeTab === "financeiro" ? financeiros : activeTab === "notas" ? notas : previsoes} onRemove={(index) => activeTab === "itens" ? setItens((prev) => prev.filter((_, i) => i !== index)) : activeTab === "frete" ? setFretes((prev) => prev.filter((_, i) => i !== index)) : activeTab === "financeiro" ? setFinanceiros((prev) => prev.filter((_, i) => i !== index)) : activeTab === "notas" ? setNotas((prev) => prev.filter((_, i) => i !== index)) : setPrevisoes((prev) => prev.filter((_, i) => i !== index))} />
+            {activeTab === "itens" && (
+              <ItensTab
+                rows={itens}
+                selecionados={itemSelecionados}
+                onAdd={() => openModal("item")}
+                onEdit={handleEditarItem}
+                onRemove={handleRemoverItem}
+                onRemoveSelecionados={handleRemoverItensSelecionados}
+                onToggle={toggleItemSelecionado}
+                onToggleTodos={toggleTodosItens}
+              />
             )}
-            {activeTab === "clausulas" && <div className="mt-2"><div className="legacy-grid cols-4"><label className="legacy-field"><span>Clausula</span><select className="legacy-select" value={clausulaCodigo} onChange={(event) => setClausulaCodigo(event.target.value)}><option value="">Selecione...</option><option value="CL01">CL01</option><option value="CL02">CL02</option><option value="CL03">CL03</option></select></label><label className="legacy-field"><span>Titulo</span><input className="legacy-input" value={clausulaTitulo} onChange={(event) => setClausulaTitulo(event.target.value)} /></label></div><div className="legacy-actions mt-2"><button type="button" className="legacy-btn" onClick={() => { if (!clausulaCodigo || !clausulaTitulo.trim()) return setError("Informe cláusula e título."); setClausulas((prev) => [...prev, { codigo: clausulaCodigo, referencia: clausulaTitulo.trim(), descricao: clausulaTitulo.trim() }]); setClausulaCodigo(""); setClausulaTitulo(""); }}>Adicionar</button></div><TabTable rows={clausulas} onRemove={(index) => setClausulas((prev) => prev.filter((_, i) => i !== index))} /></div>}
-            {activeTab === "entrada_saida" && <Placeholder text="Aba pronta para receber o fluxo de Entrada/Saída de Insumos." />}
+            {activeTab === "frete" && (
+              <FreteTab
+                rows={fretes}
+                onAdd={() => openModal("frete")}
+                onRemove={(index) => setFretes((prev) => prev.filter((_, i) => i !== index))}
+              />
+            )}
+            {activeTab === "financeiro" && (
+              <FinanceiroTab
+                rows={financeiros}
+                onAdd={() => openModal("financeiro")}
+                onRemove={(index) => setFinanceiros((prev) => prev.filter((_, i) => i !== index))}
+              />
+            )}
+            {activeTab === "notas" && (
+              <TabTable
+                onAdd={() => openModal("nota")}
+                rows={notas}
+                onRemove={(index) => setNotas((prev) => prev.filter((_, i) => i !== index))}
+              />
+            )}
+            {activeTab === "clausulas" && (
+              <ClausulasTab
+                catalogo={clausulasCatalogo}
+                clausulaSelecionadaId={clausulaCodigo}
+                titulo={clausulaTitulo}
+                rows={clausulas}
+                onSelecionar={handleSelectClausulaCatalogo}
+                onChangeTitulo={setClausulaTitulo}
+                onAdicionar={handleAddClausulaContrato}
+                onNova={handleNovaClausulaContrato}
+                onEditar={handleEditarClausulaContrato}
+                onRemove={(index) => setClausulas((prev) => prev.filter((_, i) => i !== index))}
+              />
+            )}
+            {activeTab === "previsoes" && (
+              <section className="mt-2">
+                <div className="legacy-actions"><button type="button" className="legacy-btn" onClick={() => openModal("previsao")}>Adicionar</button></div>
+                <div className="legacy-table-wrap mt-2">
+                  <table className="legacy-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: "36px" }}><input type="checkbox" disabled /></th>
+                        <th>Data Início</th>
+                        <th>Quantidade Prevista</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previsoes.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="legacy-empty">Nenhum registro adicionado.</td>
+                        </tr>
+                      )}
+                      {previsoes.map((row, index) => (
+                        <tr key={`prev-${index}`}>
+                          <td><input type="checkbox" disabled /></td>
+                          <td>{row.dataInicio || "-"}</td>
+                          <td>{row.quantidade || "0,00"}</td>
+                          <td><button type="button" className="legacy-btn" onClick={() => setPrevisoes((prev) => prev.filter((_, i) => i !== index))}>Remover</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+            {activeTab === "entrada_saida" && (
+              <section className="mt-2">
+                <div className="legacy-grid cols-4">
+                  <label className="legacy-field">
+                    <span>Período Produção</span>
+                    <select
+                      className="legacy-select"
+                      value={entradaSaida.periodoProducao}
+                      onChange={(event) => setEntradaSaida((prev) => ({ ...prev, periodoProducao: event.target.value }))}
+                    >
+                      <option value="">Selecione...</option>
+                      {PERIODO_PRODUCAO_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <CatalogAutocompleteField
+                    label="Empresa"
+                    options={empresaCatalogOptions}
+                    value={entradaSaida.fazenda}
+                    onValueChange={(value) => setEntradaSaida((prev) => ({ ...prev, fazenda: value }))}
+                    onSearchTextChange={setEmpresaSearch}
+                    listId="saida-insumos-empresa-entrada-saida"
+                    loading={loadingEmpresas}
+                  />
+                  <label className="legacy-field">
+                    <span>Distância (Raio-KM)</span>
+                    <input
+                      className="legacy-input"
+                      value={entradaSaida.distanciaRaioKm}
+                      onChange={(event) =>
+                        setEntradaSaida((prev) => ({ ...prev, distanciaRaioKm: formatCurrencyBr(event.target.value) }))
+                      }
+                    />
+                  </label>
+                  <div />
+                  <label className="legacy-field col-span-2">
+                    <span>Programação Retirada</span>
+                    <textarea
+                      className="legacy-textarea"
+                      value={entradaSaida.programacaoRetirada}
+                      onChange={(event) =>
+                        setEntradaSaida((prev) => ({ ...prev, programacaoRetirada: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="legacy-field col-span-2">
+                    <span>Programação Pagamento</span>
+                    <textarea
+                      className="legacy-textarea"
+                      value={entradaSaida.programacaoPagamento}
+                      onChange={(event) =>
+                        setEntradaSaida((prev) => ({ ...prev, programacaoPagamento: event.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="legacy-actions mt-2">
+                  <button type="button" className="legacy-btn" onClick={() => openModal("analise")}>Adicionar</button>
+                </div>
+                <div className="legacy-table-wrap mt-2">
+                  <table className="legacy-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: "36px" }}><input type="checkbox" disabled /></th>
+                        <th>Tipo Análise</th>
+                        <th>Valor Máximo</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analises.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="legacy-empty">Nenhum registro adicionado.</td>
+                        </tr>
+                      )}
+                      {analises.map((row, index) => (
+                        <tr key={`analise-${index}`}>
+                          <td><input type="checkbox" disabled /></td>
+                          <td className="left">{row.tipoAnalise || "-"}</td>
+                          <td>{row.valorMaximo || "0,00"}</td>
+                          <td><button type="button" className="legacy-btn" onClick={() => setAnalises((prev) => prev.filter((_, i) => i !== index))}>Remover</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
             {activeTab === "sap_b1" && <Placeholder text="Aba pronta para receber o fluxo de integração SAP B1." />}
           </div>
         </section>
@@ -793,22 +2047,384 @@ export default function NovoContratoSaidaInsumosPage() {
       )}
 
       {modalType && (
-        <LegacyModal title={`Adicionar ${modalType === "item" ? "Item" : modalType === "frete" ? "Frete" : modalType === "financeiro" ? "Financeiro" : modalType === "nota" ? "Nota" : "previsao"}`} onClose={() => setModalType(null)}>
-          <div className="legacy-grid cols-4">
-            {Object.keys(draft).map((field) => (
-              <label key={field} className={`legacy-field ${field === "observacao" || field === "descricao" ? "col-span-2" : ""}`}>
-                <span>{field}</span>
-                {field.toLowerCase().includes("data") ? (
-                  <input type="date" className="legacy-input" value={draft[field] ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, [field]: event.target.value }))} />
-                ) : field === "observacao" ? (
-                  <textarea className="legacy-textarea" value={draft[field] ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, [field]: event.target.value }))} />
-                ) : (
-                  <input className="legacy-input" value={draft[field] ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, [field]: event.target.value }))} />
-                )}
+        <LegacyModal
+          title={`${modalType === "item" && editingItemIndex !== null ? "Editar" : "Adicionar"} ${
+            modalType === "item"
+              ? "Item"
+              : modalType === "frete"
+                ? "Frete"
+                : modalType === "financeiro"
+                ? "Financeiro"
+                : modalType === "nota"
+                  ? "Nota"
+                  : modalType === "previsao"
+                    ? "Previsão"
+                    : modalType === "clausula"
+                      ? "Cláusula"
+                      : "Análise"
+          }`}
+          onClose={() => {
+            setModalType(null);
+            setEditingItemIndex(null);
+            setEditingClausulaIndex(null);
+          }}
+        >
+          {modalType === "item" ? (
+            <div className="legacy-grid cols-4">
+              <CatalogAutocompleteField
+                label="Item"
+                className="col-span-2"
+                options={itemCatalog.itens}
+                value={itemDraft.itemId}
+                listId="saida-item-id"
+                loading={loadingItensSap}
+                onSearchTextChange={setItemSearch}
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, itemId: value }))}
+              />
+              <CatalogAutocompleteField
+                label="Und Medida"
+                className="col-span-2"
+                options={itemCatalog.unidades}
+                value={itemDraft.undMedidaId}
+                listId="saida-und-medida-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, undMedidaId: value }))}
+              />
+              <label className="legacy-field">
+                <span>Valor Unitário</span>
+                <input className="legacy-input" value={itemDraft.valorUnitario} onChange={(event) => setItemDraft((prev) => ({ ...prev, valorUnitario: formatCurrencyBr(event.target.value) }))} />
               </label>
-            ))}
-          </div>
-          <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => setModalType(null)}>Descartar</button></div>
+              <label className="legacy-field">
+                <span>Quantidade</span>
+                <input className="legacy-input" value={itemDraft.quantidade} onChange={(event) => setItemDraft((prev) => ({ ...prev, quantidade: formatCurrencyBr(event.target.value) }))} />
+              </label>
+              <label className="legacy-field">
+                <span>Valor Total</span>
+                <input className="legacy-input" value={toDecimal(parseDecimal(itemDraft.valorUnitario) * parseDecimal(itemDraft.quantidade))} readOnly />
+              </label>
+              <label className="legacy-field">
+                <span>Valor Comissão</span>
+                <input className="legacy-input" value={itemDraft.valorComissao} onChange={(event) => setItemDraft((prev) => ({ ...prev, valorComissao: formatCurrencyBr(event.target.value) }))} />
+              </label>
+              <label className="legacy-field">
+                <span>Prazo Entrega</span>
+                <input type="date" className="legacy-input" value={itemDraft.prazoEntrega} onChange={(event) => setItemDraft((prev) => ({ ...prev, prazoEntrega: event.target.value }))} />
+              </label>
+              <CatalogAutocompleteField
+                label="Condição de Pagamento"
+                className="col-span-2"
+                options={itemCatalog.condicoesPagamento}
+                value={itemDraft.condicaoPagamentoId}
+                listId="saida-condicao-pagamento-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, condicaoPagamentoId: value }))}
+              />
+              <CatalogAutocompleteField
+                label="Depósito"
+                className="col-span-2"
+                options={itemCatalog.depositos}
+                value={itemDraft.depositoId}
+                listId="saida-deposito-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, depositoId: value }))}
+              />
+              <CatalogAutocompleteField
+                label="Centro de Custo"
+                className="col-span-2"
+                options={itemCatalog.centrosCusto}
+                value={itemDraft.centroCustoId}
+                listId="saida-centro-custo-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, centroCustoId: value }))}
+              />
+              <CatalogAutocompleteField
+                label="Utilização"
+                className="col-span-2"
+                options={itemCatalog.utilizacoes}
+                value={itemDraft.utilizacaoId}
+                listId="saida-utilizacao-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, utilizacaoId: value }))}
+              />
+              <CatalogAutocompleteField
+                label="Moeda"
+                className="col-span-2"
+                options={itemCatalog.moedas}
+                value={itemDraft.moedaId}
+                listId="saida-moeda-id"
+                onValueChange={(value) => setItemDraft((prev) => ({ ...prev, moedaId: value }))}
+              />
+            </div>
+          ) : modalType === "frete" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field col-span-2">
+                <span>Frete</span>
+                <select
+                  className="legacy-select"
+                  value={draft.frete ?? "CIF"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, frete: event.target.value }))}
+                >
+                  <option value="CIF">CIF</option>
+                  <option value="FOB">FOB</option>
+                </select>
+              </label>
+              <PickerTriggerField
+                label="Transportador"
+                className="col-span-2"
+                valueLabel={optionLabel(parceiroCatalogOptions, draft.transportadorId ?? "")}
+                onOpen={() => openPnPicker("transportador")}
+                loading={loadingParceiros}
+              />
+              <label className="legacy-field">
+                <span>CPF Motorista</span>
+                <input
+                  className="legacy-input"
+                  value={draft.cpfMotorista ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, cpfMotorista: formatCpf(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Placa</span>
+                <input
+                  className="legacy-input"
+                  value={draft.placa ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, placa: event.target.value.toUpperCase() }))}
+                />
+              </label>
+              <label className="legacy-field col-span-2">
+                <span>Observação</span>
+                <textarea
+                  className="legacy-textarea"
+                  value={draft.observacao ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, observacao: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Valor</span>
+                <input
+                  className="legacy-input"
+                  value={draft.valor ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, valor: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Qtd</span>
+                <input
+                  className="legacy-input"
+                  value={draft.qtd ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, qtd: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Qtd Chegada</span>
+                <input
+                  className="legacy-input"
+                  value={draft.qtdChegada ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, qtdChegada: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>KM</span>
+                <input
+                  className="legacy-input"
+                  value={draft.km ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, km: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Data Embarque</span>
+                <input
+                  type="date"
+                  className="legacy-input"
+                  value={draft.dataEmbarque ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, dataEmbarque: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Data Entrega</span>
+                <input
+                  type="date"
+                  className="legacy-input"
+                  value={draft.dataEntrega ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, dataEntrega: event.target.value }))}
+                />
+              </label>
+              <CatalogAutocompleteField
+                label="Equipamento"
+                className="col-span-2"
+                options={itemCatalog.itens}
+                value={draft.equipamentoId ?? ""}
+                listId="saida-frete-equipamento-id"
+                onValueChange={(value) => setDraft((prev) => ({ ...prev, equipamentoId: value }))}
+              />
+            </div>
+          ) : modalType === "financeiro" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field col-span-2">
+                <span>Descrição</span>
+                <input
+                  className="legacy-input"
+                  value={draft.descricao ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, descricao: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Data</span>
+                <input
+                  type="date"
+                  className="legacy-input"
+                  value={draft.data ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, data: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Valor</span>
+                <input
+                  className="legacy-input"
+                  value={draft.valor ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, valor: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Taxa Juros</span>
+                <input
+                  className="legacy-input"
+                  value={draft.taxaJuros ?? "0,00"}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, taxaJuros: formatCurrencyBr(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Dias Referência</span>
+                <input
+                  className="legacy-input"
+                  value={draft.diasReferencia ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, diasReferencia: onlyNumber(event.target.value) }))}
+                />
+              </label>
+              <label className="legacy-field col-span-2">
+                <span>Condição de Pagamento</span>
+                <input
+                  className="legacy-input"
+                  list="saida-financeiro-condicao-pagamento-list"
+                  placeholder="Digite para buscar..."
+                  value={draft.condicaoPagamento ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, condicaoPagamento: event.target.value }))}
+                />
+                <datalist id="saida-financeiro-condicao-pagamento-list">
+                  {itemCatalog.condicoesPagamento.map((option) => (
+                    <option key={`saida-cond-${option.value}`} value={formatCatalogDisplayLabel(option)} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="legacy-field col-span-2">
+                <span>Forma de Pagamento</span>
+                <select
+                  className="legacy-select"
+                  value={draft.formaPagamento ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, formaPagamento: event.target.value }))}
+                >
+                  <option value="">Selecione...</option>
+                  {formaPagamentoOptions.map((option) => (
+                    <option key={`saida-forma-${option.value}`} value={formatCatalogDisplayLabel(option)}>
+                      {formatCatalogDisplayLabel(option)}
+                    </option>
+                  ))}
+                  {draft.formaPagamento &&
+                    !formaPagamentoOptions.some(
+                      (option) => formatCatalogDisplayLabel(option) === draft.formaPagamento,
+                    ) && (
+                      <option value={draft.formaPagamento}>{draft.formaPagamento}</option>
+                    )}
+                </select>
+              </label>
+            </div>
+          ) : modalType === "nota" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field col-span-2">
+                <span>NF</span>
+                <input
+                  className="legacy-input"
+                  value={draft.nf ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, nf: event.target.value }))}
+                />
+              </label>
+            </div>
+          ) : modalType === "previsao" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field">
+                <span>Data Início</span>
+                <input
+                  type="date"
+                  className="legacy-input"
+                  value={draft.dataInicio ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, dataInicio: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field">
+                <span>Quantidade Prevista</span>
+                <input
+                  className="legacy-input"
+                  value={draft.quantidade ?? "0,00"}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, quantidade: formatCurrencyBr(event.target.value) }))
+                  }
+                />
+              </label>
+            </div>
+          ) : modalType === "clausula" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field">
+                <span>Código</span>
+                <input
+                  className="legacy-input"
+                  value={draft.codigo ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, codigo: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field col-span-3">
+                <span>Referência</span>
+                <input
+                  className="legacy-input"
+                  value={draft.referencia ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, referencia: event.target.value }))}
+                />
+              </label>
+              <label className="legacy-field col-span-4">
+                <span>Descrição da Cláusula</span>
+                <textarea
+                  className="legacy-textarea"
+                  value={draft.descricao ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, descricao: event.target.value }))}
+                />
+              </label>
+            </div>
+          ) : modalType === "analise" ? (
+            <div className="legacy-grid cols-4">
+              <label className="legacy-field col-span-2">
+                <span>Tipo Análise</span>
+                <select
+                  className="legacy-select"
+                  value={draft.tipoAnalise ?? ""}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, tipoAnalise: event.target.value }))}
+                >
+                  <option value="">Selecione...</option>
+                  {ANALISE_TIPO_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="legacy-field">
+                <span>Valor Máximo</span>
+                <input
+                  className="legacy-input"
+                  value={draft.valorMaximo ?? "0,00"}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, valorMaximo: formatCurrencyBr(event.target.value) }))
+                  }
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="legacy-grid cols-4" />
+          )}
+          <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => { setModalType(null); setEditingItemIndex(null); setEditingClausulaIndex(null); }}>Descartar</button></div>
         </LegacyModal>
       )}
     </div>
@@ -834,6 +2450,341 @@ function TabTable({
           <tbody>
             {rows.length === 0 && <tr><td colSpan={headers.length + 1} className="legacy-empty">Nenhum registro adicionado.</td></tr>}
             {rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.length === 0 ? <td>-</td> : headers.map((header) => <td key={header} className={header === "item" || header === "descricao" ? "left" : ""}>{row[header] || "-"}</td>)}<td><button type="button" className="legacy-btn" onClick={() => onRemove(rowIndex)}>Remover</button></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ItensTab({
+  rows,
+  selecionados,
+  onAdd,
+  onEdit,
+  onRemove,
+  onRemoveSelecionados,
+  onToggle,
+  onToggleTodos,
+}: {
+  rows: ItemRow[];
+  selecionados: number[];
+  onAdd: () => void;
+  onEdit: (index: number) => void;
+  onRemove: (index: number) => void;
+  onRemoveSelecionados: () => void;
+  onToggle: (index: number) => void;
+  onToggleTodos: (checked: boolean) => void;
+}) {
+  const todosSelecionados = rows.length > 0 && selecionados.length === rows.length;
+
+  return (
+    <section className="mt-2">
+      <p className="itens-title">Itens</p>
+      <div className="legacy-actions mt-2">
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onAdd}>Adicionar</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onRemoveSelecionados} disabled={selecionados.length === 0}>
+          Remover selecionados
+        </button>
+      </div>
+      <div className="itens-table-wrap mt-2">
+        <table className="itens-table">
+          <colgroup>
+            <col style={{ width: "34px" }} />
+            <col style={{ minWidth: "190px" }} />
+            <col style={{ minWidth: "110px" }} />
+            <col style={{ minWidth: "120px" }} />
+            <col style={{ minWidth: "105px" }} />
+            <col style={{ minWidth: "120px" }} />
+            <col style={{ minWidth: "125px" }} />
+            <col style={{ minWidth: "115px" }} />
+            <col style={{ minWidth: "190px" }} />
+            <col style={{ minWidth: "110px" }} />
+            <col style={{ minWidth: "145px" }} />
+            <col style={{ minWidth: "130px" }} />
+            <col style={{ minWidth: "90px" }} />
+            <col style={{ minWidth: "120px" }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th><input type="checkbox" checked={todosSelecionados} onChange={(event) => onToggleTodos(event.target.checked)} /></th>
+              <th>Item</th>
+              <th>Und Medida</th>
+              <th>Valor Unitário</th>
+              <th>Quantidade</th>
+              <th>Valor Total</th>
+              <th>Valor Comissão</th>
+              <th>Prazo Entrega</th>
+              <th>Condição de Pagamento</th>
+              <th>Depósito</th>
+              <th>Centro de Custo</th>
+              <th>Utilização</th>
+              <th>Moeda</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={14} className="itens-empty">&nbsp;</td>
+              </tr>
+            )}
+            {rows.map((row, index) => (
+              <tr key={`${row.itemId}-${row.condicaoPagamentoId}-${index}`}>
+                <td><input type="checkbox" checked={selecionados.includes(index)} onChange={() => onToggle(index)} /></td>
+                <td className="left">{row.item || "-"}</td>
+                <td>{row.undMedida || "-"}</td>
+                <td>{row.valorUnitario || "0,00"}</td>
+                <td>{row.quantidade || "0,00"}</td>
+                <td>{row.valorTotal || "0,00"}</td>
+                <td>{row.valorComissao || "0,00"}</td>
+                <td>{row.prazoEntrega || "-"}</td>
+                <td className="left">{row.condicaoPagamento || "-"}</td>
+                <td className="left">{row.deposito || "-"}</td>
+                <td className="left">{row.centroCusto || "-"}</td>
+                <td className="left">{row.utilizacao || "-"}</td>
+                <td>{row.moeda || "-"}</td>
+                <td>
+                  <button type="button" className="legacy-btn mr-1" onClick={() => onEdit(index)}>Editar</button>
+                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function findCatalogValueByItem(options: CatalogOption[], value: string): string | null {
+  const exact = options.find((option) => option.value === value);
+  if (exact) return exact.value;
+  const normalizedValue = stripSapPrefix(value).toUpperCase();
+  if (!normalizedValue) return null;
+  const fuzzy = options.find((option) => stripSapPrefix(option.value).toUpperCase() === normalizedValue);
+  return fuzzy?.value ?? null;
+}
+
+function optionLabelByItemValue(options: CatalogOption[], value: string): string {
+  const exact = options.find((option) => option.value === value);
+  if (exact) return exact.label;
+  const normalizedValue = stripSapPrefix(value).toUpperCase();
+  if (!normalizedValue) return "";
+  const fuzzy = options.find((option) => stripSapPrefix(option.value).toUpperCase() === normalizedValue);
+  return fuzzy?.label ?? "";
+}
+
+function normalizeItemDisplayLabel(value: string): string {
+  const stripped = stripSapPrefix(value);
+  if (!stripped) return "";
+  return stripped.replace(/\s*-\s*-\s*/g, " - ").trim();
+}
+
+function stripSapPrefix(value: string): string {
+  return String(value ?? "").replace(/^sap:[^:]+:/i, "").trim();
+}
+
+function FreteTab({
+  rows,
+  onAdd,
+  onRemove,
+}: {
+  rows: Record<string, string>[];
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <section className="mt-2">
+      <p className="itens-title">Frete contrato</p>
+      <div className="legacy-actions mt-2">
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onAdd}>Adicionar</button>
+      </div>
+      <div className="itens-table-wrap mt-2">
+        <table className="itens-table">
+          <thead>
+            <tr>
+              <th>Frete</th>
+              <th>Placa</th>
+              <th>Motorista</th>
+              <th>Valor</th>
+              <th>Qtd</th>
+              <th>Data Embarque</th>
+              <th>Data Entrega</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="itens-empty">&nbsp;</td>
+              </tr>
+            )}
+            {rows.map((row, index) => (
+              <tr key={`${row.transportadorId ?? row.transportador ?? "frete"}-${index}`}>
+                <td>{row.frete || "-"}</td>
+                <td>{row.placa || "-"}</td>
+                <td className="left">{row.transportador || "-"}</td>
+                <td>{row.valor || "0,00"}</td>
+                <td>{row.qtd || "0,00"}</td>
+                <td>{row.dataEmbarque || "-"}</td>
+                <td>{row.dataEntrega || "-"}</td>
+                <td>
+                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function FinanceiroTab({
+  rows,
+  onAdd,
+  onRemove,
+}: {
+  rows: FinanceiroRow[];
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <section className="mt-2">
+      <p className="itens-title">Financeiro</p>
+      <div className="legacy-actions mt-2">
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onAdd}>Adicionar</button>
+      </div>
+      <div className="itens-table-wrap mt-2">
+        <table className="itens-table">
+          <thead>
+            <tr>
+              <th>Descrição</th>
+              <th>Data</th>
+              <th>Valor</th>
+              <th>Taxa Juros</th>
+              <th>Dias Referência</th>
+              <th>Condição de Pagamento</th>
+              <th>Forma de Pagamento</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="itens-empty">&nbsp;</td>
+              </tr>
+            )}
+            {rows.map((row, index) => (
+              <tr key={`${row.descricao}-${row.data}-${index}`}>
+                <td className="left">{row.descricao || "-"}</td>
+                <td>{row.data || "-"}</td>
+                <td>{row.valor || "0,00"}</td>
+                <td>{row.taxaJuros || "0,00"}</td>
+                <td>{row.diasReferencia || "-"}</td>
+                <td className="left">{row.condicaoPagamento || "-"}</td>
+                <td className="left">{row.formaPagamento || "-"}</td>
+                <td>
+                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ClausulasTab({
+  catalogo,
+  clausulaSelecionadaId,
+  titulo,
+  rows,
+  onSelecionar,
+  onChangeTitulo,
+  onAdicionar,
+  onNova,
+  onEditar,
+  onRemove,
+}: {
+  catalogo: ClausulaCatalogoItem[];
+  clausulaSelecionadaId: string;
+  titulo: string;
+  rows: Record<string, string>[];
+  onSelecionar: (value: string) => void | Promise<void>;
+  onChangeTitulo: (value: string) => void;
+  onAdicionar: () => void | Promise<void>;
+  onNova: () => void;
+  onEditar: (index: number) => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <section className="mt-2">
+      <div className="legacy-grid cols-4">
+        <label className="legacy-field">
+          <span>Modelo de Contrato</span>
+          <select
+            className="legacy-select"
+            value={clausulaSelecionadaId}
+            onChange={(event) => void onSelecionar(event.target.value)}
+          >
+            <option value="">Selecione...</option>
+            {catalogo.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.codigo} - {item.titulo}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="legacy-field col-span-2">
+          <span>Título</span>
+          <input
+            className="legacy-input"
+            value={titulo}
+            onChange={(event) => onChangeTitulo(event.target.value)}
+          />
+        </label>
+      </div>
+      <p className="itens-title mt-2">Cláusula contrato</p>
+      <div className="legacy-actions mt-2">
+        <button type="button" className="legacy-btn itens-add-btn" onClick={() => void onAdicionar()}>Aplicar Modelo</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onNova}>Nova Cláusula</button>
+      </div>
+      <div className="itens-table-wrap mt-2">
+        <table className="itens-table">
+          <thead>
+            <tr>
+              <th style={{ width: "36px" }}>
+                <input type="checkbox" disabled />
+              </th>
+              <th>Código</th>
+              <th>Referência</th>
+              <th>Descrição Cláusula</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="itens-empty">&nbsp;</td>
+              </tr>
+            )}
+            {rows.map((row, index) => (
+              <tr key={`${row.codigo ?? ""}-${row.referencia ?? ""}-${index}`}>
+                <td>
+                  <input type="checkbox" disabled />
+                </td>
+                <td>{row.codigo || "-"}</td>
+                <td className="left">{row.referencia || "-"}</td>
+                <td className="left">{row.descricao || "-"}</td>
+                <td>
+                  <button type="button" className="legacy-btn mr-1" onClick={() => onEditar(index)}>Editar</button>
+                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -919,8 +2870,15 @@ function CatalogAutocompleteField({
   const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
   const [text, setText] = useState(selectedLabel);
   const [isFocused, setIsFocused] = useState(false);
-  const inputValue = isFocused ? text : value ? selectedLabel : text;
+  const inputValue = isFocused ? text : value ? selectedLabel || text : text;
   const filteredOptions = filterCatalogOptions(options, inputValue, value);
+
+  useEffect(() => {
+    if (isFocused) return;
+    if (value && selectedLabel) {
+      setText(selectedLabel);
+    }
+  }, [isFocused, selectedLabel, value]);
 
   function handleChange(nextText: string) {
     setText(nextText);
@@ -939,6 +2897,7 @@ function CatalogAutocompleteField({
     });
 
     if (exact) {
+      setText(exact.label);
       onValueChange(exact.value);
       return;
     }
@@ -978,10 +2937,209 @@ function CatalogAutocompleteField({
   );
 }
 
+function normalizeItemCatalog(value: Partial<ItemCatalog>): ItemCatalog {
+  return {
+    itens: normalizeCatalogOptions(value.itens),
+    unidades: normalizeCatalogOptions(value.unidades),
+    condicoesPagamento: normalizeCatalogOptions(value.condicoesPagamento),
+    formasPagamento: normalizeCatalogOptions(value.formasPagamento),
+    depositos: normalizeCatalogOptions(value.depositos),
+    centrosCusto: normalizeCatalogOptions(value.centrosCusto),
+    utilizacoes: normalizeCatalogOptions(value.utilizacoes),
+    moedas: normalizeCatalogOptions(value.moedas),
+  };
+}
+
+function normalizeCatalogOptions(value: unknown): CatalogOption[] {
+  if (!Array.isArray(value)) return [];
+  const deduped = new Map<string, CatalogOption>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const data = item as Record<string, unknown>;
+    const next = {
+      value: String(data.value ?? "").trim(),
+      label: String(data.label ?? "").trim(),
+    };
+    if (!next.value || !next.label) continue;
+    const key = `${next.value}|${next.label}`.toUpperCase();
+    if (!deduped.has(key)) {
+      deduped.set(key, next);
+    }
+  }
+  return Array.from(deduped.values());
+}
+
+function createEmptyItemDraft(_: ItemCatalog): ItemDraft {
+  return {
+    itemId: "",
+    undMedidaId: "",
+    valorUnitario: "0,00",
+    quantidade: "0,00",
+    valorComissao: "0,00",
+    prazoEntrega: "",
+    condicaoPagamentoId: "",
+    depositoId: "",
+    centroCustoId: "",
+    utilizacaoId: "",
+    moedaId: "",
+  };
+}
+
+function hydrateItemDraft(draft: ItemDraft, catalog: ItemCatalog): ItemDraft {
+  return {
+    ...draft,
+    itemId: pickExistingOrDefault(draft.itemId, catalog.itens),
+    undMedidaId: pickExistingOrDefault(draft.undMedidaId, catalog.unidades),
+    condicaoPagamentoId: pickExistingOrDefault(draft.condicaoPagamentoId, catalog.condicoesPagamento),
+    depositoId: pickExistingOrDefault(draft.depositoId, catalog.depositos),
+    centroCustoId: pickExistingOrDefault(draft.centroCustoId, catalog.centrosCusto),
+    utilizacaoId: pickExistingOrDefault(draft.utilizacaoId, catalog.utilizacoes),
+    moedaId: pickExistingOrDefault(draft.moedaId, catalog.moedas, preferBrMoeda(catalog.moedas)),
+  };
+}
+
+function pickExistingOrDefault(value: string, options: CatalogOption[], fallback = ""): string {
+  if (!value) return "";
+  if (options.some((option) => option.value === value)) return value;
+  if (fallback) return fallback;
+  return options[0]?.value ?? "";
+}
+
+function preferBrMoeda(options: CatalogOption[]): string {
+  const brl = options.find((option) => option.label.toUpperCase().includes("BRL") || option.label.toUpperCase().includes("REAL"));
+  return brl?.value ?? options[0]?.value ?? "";
+}
+
+function formatCatalogDisplayLabel(option: CatalogOption): string {
+  const value = String(option.value ?? "").trim();
+  const label = String(option.label ?? "").trim();
+  const sourceValue = value.includes(":") ? value.split(":").pop()?.trim() || value : value;
+  if (!value) return label;
+  if (!label) return value;
+  if (label.includes(" - ")) return label;
+  const normalizedLabel = label.toUpperCase();
+  const normalizedValue = sourceValue.toUpperCase();
+  if (normalizedLabel === normalizedValue || normalizedLabel.startsWith(`${normalizedValue} -`)) {
+    return label;
+  }
+  return `${sourceValue} - ${label}`;
+}
+
+function sortClausulasCatalogo(items: ClausulaCatalogoItem[]): ClausulaCatalogoItem[] {
+  return [...items].sort((a, b) => {
+    const codigoA = normalizeSearchTerm(a.codigo);
+    const codigoB = normalizeSearchTerm(b.codigo);
+    if (codigoA !== codigoB) return codigoA.localeCompare(codigoB);
+    return normalizeSearchTerm(a.titulo).localeCompare(normalizeSearchTerm(b.titulo));
+  });
+}
+
+function sortClausulasRows(rows: Record<string, string>[]): Record<string, string>[] {
+  return [...rows].sort((a, b) => {
+    const codigoA = asText(a.codigo);
+    const codigoB = asText(b.codigo);
+    const numberA = parseLeadingNumber(codigoA);
+    const numberB = parseLeadingNumber(codigoB);
+
+    if (numberA !== null && numberB !== null && numberA !== numberB) return numberA - numberB;
+    if (numberA !== null && numberB === null) return -1;
+    if (numberA === null && numberB !== null) return 1;
+
+    const codigoCmp = normalizeSearchTerm(codigoA).localeCompare(normalizeSearchTerm(codigoB), "pt-BR");
+    if (codigoCmp !== 0) return codigoCmp;
+
+    const refCmp = normalizeSearchTerm(asText(a.referencia)).localeCompare(
+      normalizeSearchTerm(asText(b.referencia)),
+      "pt-BR",
+    );
+    if (refCmp !== 0) return refCmp;
+
+    return normalizeSearchTerm(asText(a.descricao)).localeCompare(
+      normalizeSearchTerm(asText(b.descricao)),
+      "pt-BR",
+    );
+  });
+}
+
+function parseLeadingNumber(value: string): number | null {
+  const match = String(value ?? "").match(/\d+/);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[0], 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function upsertClausulaCatalogo(
+  items: ClausulaCatalogoItem[],
+  nextItem: ClausulaCatalogoItem,
+): ClausulaCatalogoItem[] {
+  const existingIndex = items.findIndex((item) => item.id === nextItem.id || item.codigo === nextItem.codigo);
+  if (existingIndex === -1) return [...items, nextItem];
+  return items.map((item, index) => (index === existingIndex ? nextItem : item));
+}
+
 function mapGenericRowFromApi(row: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(row).map(([key, value]) => [key, asText(value)]),
   );
+}
+
+function mapItemRowFromApi(row: Record<string, unknown>, catalog: ItemCatalog): ItemRow {
+  const itemId = asText(row.itemId) || "";
+  const undMedidaId = asText(row.undMedidaId) || "";
+  const condicaoPagamentoId = asText(row.condicaoPagamentoId) || "";
+  const depositoId = asText(row.depositoId) || "";
+  const centroCustoId = asText(row.centroCustoId) || "";
+  const utilizacaoId = asText(row.utilizacaoId) || "";
+  const moedaId = asText(row.moedaId) || "";
+  const rawItemLabel = normalizeItemDisplayLabel(asText(row.item));
+  const itemLabelFromCatalog = normalizeItemDisplayLabel(optionLabelByItemValue(catalog.itens, itemId));
+  const itemCode = stripSapPrefix(itemId);
+  const itemLabel =
+    (rawItemLabel && rawItemLabel.toUpperCase() !== itemCode.toUpperCase() ? rawItemLabel : "") ||
+    itemLabelFromCatalog ||
+    rawItemLabel ||
+    itemCode;
+
+  return {
+    itemId,
+    item: itemLabel,
+    undMedidaId,
+    undMedida: asText(row.undMedida) || optionLabel(catalog.unidades, undMedidaId),
+    valorUnitario: formatCurrencyFromUnknown(row.valorUnitario),
+    quantidade: formatCurrencyFromUnknown(row.quantidade),
+    valorTotal: formatCurrencyFromUnknown(row.valorTotal),
+    valorComissao: formatCurrencyFromUnknown(row.valorComissao),
+    prazoEntrega: toDateInputValue(row.prazoEntrega),
+    condicaoPagamentoId,
+    condicaoPagamento: asText(row.condicaoPagamento) || optionLabel(catalog.condicoesPagamento, condicaoPagamentoId),
+    depositoId,
+    deposito: asText(row.deposito) || optionLabel(catalog.depositos, depositoId),
+    centroCustoId,
+    centroCusto: asText(row.centroCusto) || optionLabel(catalog.centrosCusto, centroCustoId),
+    utilizacaoId,
+    utilizacao: asText(row.utilizacao) || optionLabel(catalog.utilizacoes, utilizacaoId),
+    moedaId,
+    moeda: asText(row.moeda) || optionLabel(catalog.moedas, moedaId),
+  };
+}
+
+function mapFinanceiroRowFromApi(row: Record<string, unknown>): FinanceiroRow {
+  return {
+    descricao: asText(row.descricao) || "",
+    data: toDateInputValue(row.data),
+    valor: formatCurrencyFromUnknown(row.valor),
+    taxaJuros: formatCurrencyFromUnknown(row.taxaJuros),
+    diasReferencia: asText(row.diasReferencia) || "",
+    condicaoPagamento: asText(row.condicaoPagamento) || "",
+    formaPagamento: asText(row.formaPagamento) || "",
+  };
+}
+
+function mapPrevisaoRowFromApi(row: Record<string, unknown>): Record<string, string> {
+  return {
+    dataInicio: asText(row.dataInicio ?? row.dtInicio ?? row.dt_inicio),
+    quantidade: formatCurrencyFromUnknown(row.quantidade ?? row.qt ?? row.valor),
+  };
 }
 
 function optionLabel(options: CatalogOption[], value: string): string {
@@ -992,6 +3150,11 @@ function optionLabel(options: CatalogOption[], value: string): string {
 function asText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function asPositiveString(value: unknown): string | null {
@@ -1027,6 +3190,32 @@ function parseUnknownNumber(value: unknown): number {
   return Number(text);
 }
 
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const text = asText(value).toLowerCase();
+  return text === "true" || text === "1" || text === "t" || text === "sim";
+}
+
+function normalizeResponsavelFrete(value: string): BasicForm["responsavelFrete"] {
+  if (value === "parceiro" || value === "terceiro") return value;
+  return "empresa";
+}
+
+function normalizeCalculoFrete(value: string): BasicForm["calculoFrete"] {
+  if (
+    value === "fixo" ||
+    value === "por_tonelada" ||
+    value === "por_unidade" ||
+    value === "por_km" ||
+    value === "sem_frete" ||
+    value === "km_rodado" ||
+    value === "peso"
+  ) {
+    return value;
+  }
+  return "km_rodado";
+}
+
 function normalizeStatusValue(value: string): ContratoStatus {
   const normalized = value
     .normalize("NFD")
@@ -1054,6 +3243,16 @@ function statusLabel(value: ContratoStatus): string {
   if (value === "contendo_parc") return "Conferido Parcialmente";
   if (value === "encerrado") return "Encerrado";
   return "Inativo/Cancelado";
+}
+
+function normalizeTipoContrato(value: string): BasicForm["tipoContrato"] {
+  const normalized = normalizeSearchTerm(value);
+  if (normalized.includes("entrada")) return "entrada_insumos";
+  return "saida_insumos";
+}
+
+function tipoContratoLabel(value: BasicForm["tipoContrato"]): string {
+  return value === "entrada_insumos" ? "Entrada de Insumos" : "Saída de Insumos";
 }
 
 function onlyNumber(value: string): string {
@@ -1163,5 +3362,3 @@ function upsertParceiroOption(current: ParceiroOption[], next: ParceiroOption): 
   if (index === -1) return [...current, next].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   return current.map((item, position) => (position === index ? next : item));
 }
-
-

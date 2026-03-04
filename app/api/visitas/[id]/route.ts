@@ -13,7 +13,7 @@ const validStatus = new Set<VisitaStatus>([
   "arquivada",
 ]);
 
-const validTipoContrato = new Set<VisitaTipoContrato>(["entrada_animais", "saida_insumos"]);
+const validTipoContrato = new Set<VisitaTipoContrato>(["entrada_animais"]);
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -91,7 +91,12 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json(updated);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao atualizar visita.";
-    const statusCode = message.toLowerCase().includes("nao encontrada") ? 404 : 500;
+    const messageLower = message.toLowerCase();
+    const statusCode = messageLower.includes("nao encontrada")
+      ? 404
+      : messageLower.includes("nao pode ser editada")
+        ? 409
+        : 500;
     return NextResponse.json({ error: message }, { status: statusCode });
   }
 }

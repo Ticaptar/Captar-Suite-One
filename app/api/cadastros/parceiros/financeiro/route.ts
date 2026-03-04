@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const referencia = searchParams.get("referencia")?.trim() ?? "";
 
   if (!referencia) {
-    return NextResponse.json({ error: "Referencia do parceiro e obrigatoria." }, { status: 400 });
+    return NextResponse.json({ error: "Referência do parceiro é obrigatória." }, { status: 400 });
   }
 
   if (!isSapServiceLayerConfigured()) {
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       digito: defaults?.digito ?? "",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Falha ao carregar padrao financeiro do parceiro.";
+    const message = error instanceof Error ? error.message : "Falha ao carregar padrão financeiro do parceiro.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

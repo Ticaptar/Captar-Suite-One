@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
@@ -25,6 +25,17 @@ const statusOptions: Array<{ value: ""; label: string } | { value: ContratoStatu
 
 export default function ContratoSaidaInsumosListPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const tipoContrato: "saida_insumos" | "entrada_insumos" = pathname.includes("/entrada-insumos")
+    ? "entrada_insumos"
+    : "saida_insumos";
+  const basePath = tipoContrato === "entrada_insumos" ? "/contratos/entrada-insumos" : "/contratos/saida-insumos";
+  const tituloPagina =
+    tipoContrato === "entrada_insumos" ? "Contratos de Entrada de Insumos" : "Contratos de Saída de Insumos";
+  const subtituloPagina =
+    tipoContrato === "entrada_insumos"
+      ? "Consulte, filtre e acompanhe os contratos de entrada em um único painel."
+      : "Consulte, filtre e acompanhe o status dos contratos em um único painel.";
   const [items, setItems] = useState<ContratoSaidaInsumosListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -57,6 +68,7 @@ export default function ContratoSaidaInsumosListPage() {
       if (status) params.set("status", status);
       if (exercicio.trim()) params.set("exercicio", exercicio.trim());
       if (searchTerm.trim()) params.set("search", searchTerm.trim());
+      params.set("tipo", tipoContrato);
 
       const response = await fetch(`/api/contratos/saida-insumos?${params.toString()}`, {
         cache: "no-store",
@@ -77,7 +89,7 @@ export default function ContratoSaidaInsumosListPage() {
     } finally {
       setLoading(false);
     }
-  }, [exercicio, page, pageSize, searchTerm, status]);
+  }, [exercicio, page, pageSize, searchTerm, status, tipoContrato]);
 
   useEffect(() => {
     loadData().catch(() => undefined);
@@ -94,19 +106,18 @@ export default function ContratoSaidaInsumosListPage() {
     <div className="page-shell min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
         <FormPageHeader
-          title="Contratos de Saída de Insumos"
-          subtitle="Consulte, filtre e acompanhe o status dos contratos em um único painel."
+          title={tituloPagina}
+          subtitle={subtituloPagina}
           backHref="/"
           backLabel="Início"
         />
         <ModuleHeader />
 
         <section className="card p-3">
-          <div className="legacy-toolbar">
+          <div className="legacy-toolbar compact-toolbar">
             <div className="legacy-toolbar-left">
-              <h1 className="legacy-title">Contrato de Saída de Insumos</h1>
               <div className="legacy-actions">
-                <Link href="/contratos/saida-insumos/novo" className="legacy-btn primary">
+                <Link href={`${basePath}/novo`} className="legacy-btn primary">
                   Criar
                 </Link>
                 <button type="button" className="legacy-btn" onClick={() => loadData()} disabled={loading}>
@@ -181,12 +192,12 @@ export default function ContratoSaidaInsumosListPage() {
                   <th>Exercício</th>
                   <th>ID</th>
                   <th>Referência do Contrato</th>
-                  <th>Numero</th>
+                  <th>Número</th>
                   <th>Parceiro</th>
                   <th>Status</th>
-                  <th>Tipo Contrato</th>
+                  <th>Tipo de Contrato</th>
                   <th>Início</th>
-                  <th>Valor Pago SAP</th>
+                  <th>Valor Total Itens</th>
                 </tr>
               </thead>
               <tbody>
@@ -208,7 +219,7 @@ export default function ContratoSaidaInsumosListPage() {
                   items.map((item) => (
                     <tr
                       key={item.id}
-                      onClick={() => router.push(`/contratos/saida-insumos/novo?id=${item.id}`)}
+                      onClick={() => router.push(`${basePath}/novo?id=${item.id}`)}
                       className="cursor-pointer"
                       title={`Abrir contrato #${item.id}`}
                     >
@@ -222,7 +233,7 @@ export default function ContratoSaidaInsumosListPage() {
                       </td>
                       <td>{tipoLabel(item.tipoContrato)}</td>
                       <td>{toDateLabel(item.inicioEm)}</td>
-                      <td>{toMoney(item.valorPagoSap)}</td>
+                      <td>{toMoney(item.valorTotalItens)}</td>
                     </tr>
                   ))}
               </tbody>

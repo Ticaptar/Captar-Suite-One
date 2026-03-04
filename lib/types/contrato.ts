@@ -14,17 +14,40 @@ export type ContratoListItem = {
   numero: string;
   refObjectId: string | null;
   parceiro: string | null;
+  temMapa?: boolean;
   status: ContratoStatus;
   tipoContrato: ContratoTipo | string;
   inicioEm: string | null;
-  valorPagoSap: number;
+  valorTotalItens: number;
 };
 
 export type ContratoDadosGeraisInput = {
   tipoEntrada?: string | null;
   tabelaPreco?: string | null;
   originador?: string | null;
+  compradorId?: string | null;
+  compradorCodigo?: string | null;
+  compradorNome?: string | null;
+  compradorDocumento?: string | null;
+  faturadorId?: string | null;
+  faturadorCodigo?: string | null;
+  faturadorNome?: string | null;
+  faturadorDocumento?: string | null;
+  frigorificoId?: string | null;
+  frigorificoCodigo?: string | null;
+  frigorificoNome?: string | null;
+  frigorificoDocumento?: string | null;
+  anuenteId?: string | null;
+  anuenteCodigo?: string | null;
+  anuenteNome?: string | null;
+  anuenteDocumento?: string | null;
   sexo?: string | null;
+  valorArroba?: number | null;
+  rcFixo?: number | null;
+  dataEmbarque?: string | null;
+  dataPesagem?: string | null;
+  dataAbate?: string | null;
+  tipoSaida?: string | null;
   quantidadeNegociada?: number | null;
   animaisMapa?: number | null;
   pesoMapaKg?: number | null;
@@ -52,6 +75,18 @@ export type ContratoDadosGeraisInput = {
   categoria?: string | null;
   racaPredominante?: string | null;
   precoVendaFutura?: boolean | null;
+  periodoProducao?: string | null;
+  fazenda?: string | null;
+  distanciaRaioKm?: number | null;
+  programacaoRetirada?: string | null;
+  programacaoPagamento?: string | null;
+  analises?: Array<{
+    tipoAnalise?: string | null;
+    valorMaximo?: number | null;
+  }> | null;
+  lotes?: ContratoLinhaPayload[] | null;
+  gtaContratos?: ContratoLinhaPayload[] | null;
+  abates?: ContratoLinhaPayload[] | null;
 };
 
 export type ContratoCustosResumoInput = {
@@ -75,6 +110,18 @@ export type ContratoCustosResumoInput = {
   descontoVendaArroba?: number | null;
 };
 
+export type ContratoOutrosInput = {
+  dataEmbarque?: string | null;
+  dataPrevistaChegada?: string | null;
+  freteConfinamento?: string | null;
+  fazendaDestino?: string | null;
+  fazendaOrigem?: string | null;
+  descontoAcerto?: boolean | null;
+  descricaoDesconto?: string | null;
+  pesoReferencia?: string | null;
+  observacao?: string | null;
+};
+
 export type ContratoLinhaPayload = Record<string, string>;
 
 export type ContratoEmpresaSapInput = {
@@ -82,6 +129,11 @@ export type ContratoEmpresaSapInput = {
   codigo?: string | null;
   nome: string;
   cnpj?: string | null;
+  rgIe?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  representanteLegal?: string | null;
+  endereco?: string | null;
 };
 
 export type ContratoParceiroSapInput = {
@@ -89,9 +141,19 @@ export type ContratoParceiroSapInput = {
   codigo?: string | null;
   nome: string;
   documento?: string | null;
+  rgIe?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+  representanteLegal?: string | null;
+  cpf?: string | null;
+  rg?: string | null;
+  profissao?: string | null;
+  estadoCivil?: string | null;
+  endereco?: string | null;
 };
 
 export type ContratoCreateInput = {
+  tipoContrato?: ContratoTipo | string | null;
   empresaId?: number | null;
   empresaSap?: ContratoEmpresaSapInput | null;
   parceiroId?: number | null;
@@ -137,6 +199,7 @@ export type ContratoCreateInput = {
   sapValorPago?: number;
   sapUltimoSyncEm?: string | null;
   dadosGerais?: ContratoDadosGeraisInput;
+  outros?: ContratoOutrosInput;
   custosResumo?: ContratoCustosResumoInput;
   custosCategorias?: ContratoLinhaPayload[];
   itens?: ContratoLinhaPayload[];
@@ -144,6 +207,8 @@ export type ContratoCreateInput = {
   financeiros?: ContratoLinhaPayload[];
   notas?: ContratoLinhaPayload[];
   clausulas?: ContratoLinhaPayload[];
+  clausulaModeloId?: number | null;
+  clausulaTitulo?: string | null;
   previsoes?: ContratoLinhaPayload[];
   mapas?: ContratoLinhaPayload[];
   criadoPor?: string | null;
@@ -165,9 +230,13 @@ export type ContratoStatusChangeInput = {
 
 export type ContratoSaidaInsumosListItem = ContratoListItem;
 export type ContratoEntradaAnimaisListItem = ContratoListItem;
+export type ContratoSaidaAnimaisListItem = ContratoListItem;
 export type ContratoSaidaInsumosCreateInput = ContratoCreateInput;
 export type ContratoEntradaAnimaisCreateInput = ContratoCreateInput;
+export type ContratoSaidaAnimaisCreateInput = ContratoCreateInput;
 export type ContratoSaidaInsumosUpdateInput = ContratoUpdateInput;
 export type ContratoEntradaAnimaisUpdateInput = ContratoUpdateInput;
+export type ContratoSaidaAnimaisUpdateInput = ContratoUpdateInput;
 export type ContratoSaidaInsumosStatusChangeInput = ContratoStatusChangeInput;
 export type ContratoEntradaAnimaisStatusChangeInput = ContratoStatusChangeInput;
+export type ContratoSaidaAnimaisStatusChangeInput = ContratoStatusChangeInput;

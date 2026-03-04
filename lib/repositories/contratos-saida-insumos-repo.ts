@@ -13,6 +13,7 @@ import type {
 
 type ListFilters = {
   status?: ContratoStatus | null;
+  tipo?: "saida_insumos" | "entrada_insumos" | null;
   exercicio?: number | null;
   search?: string | null;
   page: number;
@@ -26,6 +27,8 @@ type MetadataPayload = {
   mapas?: ContratoLinhaPayload[] | null;
   comissionadoId?: number | null;
   emissorNotaId?: number | null;
+  clausulaModeloId?: number | null;
+  clausulaTitulo?: string | null;
   empresaSap?: ContratoEmpresaSapInput | null;
   parceiroSap?: ContratoParceiroSapInput | null;
 };
@@ -33,7 +36,7 @@ type MetadataPayload = {
 const tableExistsCache = new Map<string, boolean>();
 let snapshotColumnsEnsured = false;
 let itemSnapshotColumnsEnsured = false;
-const SAIDA_INSUMOS_WHERE = "lower(coalesce(c.tp_contrato, '')) = 'saida_insumos'";
+const INSUMOS_WHERE = "lower(coalesce(c.tp_contrato, '')) IN ('saida_insumos', 'entrada_insumos')";
 const OBS_META_MARKER = "\n\n/*CS_META*/";
 
 const NORMALIZED_STATUS_SQL = `
@@ -52,17 +55,22 @@ export async function listContratosSaidaInsumos(filters: ListFilters) {
   await assertContratoTable(pool);
 
   const status = filters.status ?? null;
+  const tipo = filters.tipo ?? null;
   const exercicio = filters.exercicio ?? null;
   const search = filters.search?.trim() ? filters.search.trim() : null;
   const offset = (filters.page - 1) * filters.pageSize;
 
   const withParceiro = await hasTable(pool, "dbo.res_partner");
+  const withContratoItem = await hasTable(pool, "contrato.contrato_item");
   const parceiroJoin = withParceiro ? "LEFT JOIN dbo.res_partner p ON p.id = c.parceiro_id" : "";
   const parceiroSelect = withParceiro
     ? "trim(BOTH ' - ' FROM concat_ws(' - ', coalesce(to_jsonb(p)->>'codigo', to_jsonb(p)->>'ref', c.parceiro_codigo_snapshot), coalesce(to_jsonb(p)->>'nome', to_jsonb(p)->>'name', c.parceiro_nome_snapshot), coalesce(to_jsonb(p)->>'documento', to_jsonb(p)->>'cnpj_cpf', to_jsonb(p)->>'vat', c.parceiro_documento_snapshot))) AS parceiro"
     : "trim(BOTH ' - ' FROM concat_ws(' - ', c.parceiro_codigo_snapshot, c.parceiro_nome_snapshot, c.parceiro_documento_snapshot)) AS parceiro";
+  const valorTotalItensSelect = withContratoItem
+    ? "coalesce((SELECT sum(coalesce(ci.vl_total, 0)) FROM contrato.contrato_item ci WHERE ci.contrato_id = c.id), 0) AS \"valorTotalItens\""
+    : "0::numeric AS \"valorTotalItens\"";
   const parceiroSearch = withParceiro
-    ? "OR coalesce(to_jsonb(p)->>'nome', to_jsonb(p)->>'name', '') ILIKE '%' || $3 || '%' OR coalesce(to_jsonb(p)->>'codigo', to_jsonb(p)->>'ref', '') ILIKE '%' || $3 || '%' OR coalesce(to_jsonb(p)->>'documento', to_jsonb(p)->>'cnpj_cpf', to_jsonb(p)->>'vat', '') ILIKE '%' || $3 || '%'"
+    ? "OR coalesce(to_jsonb(p)->>'nome', to_jsonb(p)->>'name', '') ILIKE '%' || $4 || '%' OR coalesce(to_jsonb(p)->>'codigo', to_jsonb(p)->>'ref', '') ILIKE '%' || $4 || '%' OR coalesce(to_jsonb(p)->>'documento', to_jsonb(p)->>'cnpj_cpf', to_jsonb(p)->>'vat', '') ILIKE '%' || $4 || '%'"
     : "";
 
   const [countResult, rowsResult] = await Promise.all([
@@ -71,18 +79,19 @@ export async function listContratosSaidaInsumos(filters: ListFilters) {
       SELECT count(*)::text AS total
       FROM contrato.contrato c
       ${parceiroJoin}
-      WHERE ${SAIDA_INSUMOS_WHERE}
+      WHERE ${INSUMOS_WHERE}
         AND ($1::text IS NULL OR ${NORMALIZED_STATUS_SQL} = $1)
-        AND ($2::integer IS NULL OR c.ano = $2)
+        AND ($2::text IS NULL OR lower(coalesce(c.tp_contrato, '')) = $2)
+        AND ($3::integer IS NULL OR c.ano = $3)
         AND (
-          $3::text IS NULL
-          OR coalesce(c.descricao, '') ILIKE '%' || $3 || '%'
-          OR coalesce(c.numero::text, '') ILIKE '%' || $3 || '%'
-          OR coalesce(c.observacao, '') ILIKE '%' || $3 || '%'
+          $4::text IS NULL
+          OR coalesce(c.descricao, '') ILIKE '%' || $4 || '%'
+          OR coalesce(c.numero::text, '') ILIKE '%' || $4 || '%'
+          OR coalesce(c.observacao, '') ILIKE '%' || $4 || '%'
           ${parceiroSearch}
         )
       `,
-      [status, exercicio, search],
+      [status, tipo, exercicio, search],
     ),
     pool.query(
       `
@@ -96,24 +105,25 @@ export async function listContratosSaidaInsumos(filters: ListFilters) {
         ${NORMALIZED_STATUS_SQL} AS status,
         coalesce(c.tp_contrato, 'saida_insumos') AS "tipoContrato",
         c.dt_inicio AS "inicioEm",
-        coalesce(c.b1_vl_pago, 0) AS "valorPagoSap",
+        ${valorTotalItensSelect},
         c.observacao AS "_observacao"
       FROM contrato.contrato c
       ${parceiroJoin}
-      WHERE ${SAIDA_INSUMOS_WHERE}
+      WHERE ${INSUMOS_WHERE}
         AND ($1::text IS NULL OR ${NORMALIZED_STATUS_SQL} = $1)
-        AND ($2::integer IS NULL OR c.ano = $2)
+        AND ($2::text IS NULL OR lower(coalesce(c.tp_contrato, '')) = $2)
+        AND ($3::integer IS NULL OR c.ano = $3)
         AND (
-          $3::text IS NULL
-          OR coalesce(c.descricao, '') ILIKE '%' || $3 || '%'
-          OR coalesce(c.numero::text, '') ILIKE '%' || $3 || '%'
-          OR coalesce(c.observacao, '') ILIKE '%' || $3 || '%'
+          $4::text IS NULL
+          OR coalesce(c.descricao, '') ILIKE '%' || $4 || '%'
+          OR coalesce(c.numero::text, '') ILIKE '%' || $4 || '%'
+          OR coalesce(c.observacao, '') ILIKE '%' || $4 || '%'
           ${parceiroSearch}
         )
       ORDER BY c.ano DESC, c.id DESC
-      LIMIT $4 OFFSET $5
+      LIMIT $5 OFFSET $6
       `,
-      [status, exercicio, search, filters.pageSize, offset],
+      [status, tipo, exercicio, search, filters.pageSize, offset],
     ),
   ]);
 
@@ -125,7 +135,7 @@ export async function listContratosSaidaInsumos(filters: ListFilters) {
         ...row,
         parceiro: toNullableString(row.parceiro) ?? parceiroFallback ?? null,
         status: normalizeStatus(row.status),
-        valorPagoSap: toNumber(row.valorPagoSap),
+        valorTotalItens: toNumber(row.valorTotalItens),
       };
     }),
     total: Number.parseInt(countResult.rows[0]?.total ?? "0", 10),
@@ -161,7 +171,7 @@ export async function getContratoSaidaInsumosById(id: number) {
     ${empresaJoin}
     ${parceiroJoin}
     WHERE c.id = $1
-      AND ${SAIDA_INSUMOS_WHERE}
+      AND ${INSUMOS_WHERE}
     `,
     [id],
   );
@@ -181,11 +191,19 @@ export async function getContratoSaidaInsumosById(id: number) {
     contrato.empresa_codigo = toNullableString(contrato.empresa_codigo) ?? toNullableString(contrato.empresa_codigo_snapshot) ?? empresaSap.codigo;
     (contrato as Record<string, unknown>).empresa_cnpj =
       toNullableString((contrato as Record<string, unknown>).empresa_cnpj) ?? toNullableString((contrato as Record<string, unknown>).empresa_cnpj_snapshot) ?? empresaSap.cnpj;
+    (contrato as Record<string, unknown>).empresa_ie = toNullableString((contrato as Record<string, unknown>).empresa_ie) ?? empresaSap.rgIe ?? null;
+    (contrato as Record<string, unknown>).empresa_telefone = toNullableString((contrato as Record<string, unknown>).empresa_telefone) ?? empresaSap.telefone ?? null;
+    (contrato as Record<string, unknown>).empresa_email = toNullableString((contrato as Record<string, unknown>).empresa_email) ?? empresaSap.email ?? null;
+    (contrato as Record<string, unknown>).empresa_endereco = toNullableString((contrato as Record<string, unknown>).empresa_endereco) ?? empresaSap.endereco ?? null;
   }
   if (parceiroSap?.nome) {
     contrato.parceiro_nome_base = toNullableString(contrato.parceiro_nome_base) ?? toNullableString(contrato.parceiro_nome_snapshot) ?? parceiroSap.nome;
     contrato.parceiro_codigo_base = toNullableString(contrato.parceiro_codigo_base) ?? toNullableString(contrato.parceiro_codigo_snapshot) ?? parceiroSap.codigo;
     contrato.parceiro_documento_base = toNullableString(contrato.parceiro_documento_base) ?? toNullableString(contrato.parceiro_documento_snapshot) ?? parceiroSap.documento;
+    (contrato as Record<string, unknown>).parceiro_ie = toNullableString((contrato as Record<string, unknown>).parceiro_ie) ?? parceiroSap.rgIe ?? null;
+    (contrato as Record<string, unknown>).parceiro_telefone = toNullableString((contrato as Record<string, unknown>).parceiro_telefone) ?? parceiroSap.telefone ?? null;
+    (contrato as Record<string, unknown>).parceiro_email = toNullableString((contrato as Record<string, unknown>).parceiro_email) ?? parceiroSap.email ?? null;
+    (contrato as Record<string, unknown>).parceiro_endereco = toNullableString((contrato as Record<string, unknown>).parceiro_endereco) ?? parceiroSap.endereco ?? null;
   }
 
   const [itensRows, fretesRows, financeiroRows, notasRows, clausulasRows, previsoesRows] = await Promise.all([
@@ -206,6 +224,8 @@ export async function getContratoSaidaInsumosById(id: number) {
       dadosGerais: readDadosGeraisFromMeta(metadata),
       comissionadoId: toNullableInteger(metadata?.comissionadoId),
       emissorNotaId: toNullableInteger(metadata?.emissorNotaId),
+      clausulaModeloId: toNullableInteger(contrato.clausula_id) ?? toNullableInteger(metadata?.clausulaModeloId),
+      clausulaTitulo: toNullableString(contrato.titulo_clausula) ?? toNullableString(metadata?.clausulaTitulo),
     },
     itens: itensRows.map(mapItemRowToPayload),
     fretes: fretesRows.map(mapFreteRowToPayload),
@@ -239,11 +259,15 @@ export async function createContratoSaidaInsumos(input: ContratoSaidaInsumosCrea
       mapas: input.mapas ?? null,
       comissionadoId: input.comissionadoId ?? null,
       emissorNotaId: input.emissorNotaId ?? null,
+      clausulaModeloId: input.clausulaModeloId ?? null,
+      clausulaTitulo: toNullableString(input.clausulaTitulo),
       empresaSap: input.empresaSap ?? null,
       parceiroSap: input.parceiroSap ?? null,
     };
 
     const observacoes = composeObservacoesWithMeta(input.observacoes ?? null, metadata);
+
+    const tipoContrato = normalizeTipoContrato(input.tipoContrato);
 
     const insertResult = await client.query<{ id: number }>(
       `
@@ -289,19 +313,21 @@ export async function createContratoSaidaInsumos(input: ContratoSaidaInsumosCrea
         execucao,
         observacao,
         permuta,
+        contrato_permuta_id,
         aditivo,
+        tp_aditivo_id,
         b1_vl_pago
       )
       VALUES (
         now(), now(),
         $1, $2, $3, $4, 'aguardando_aprovacao',
-        $5, $6, $7, $8, $9, $10, $11, $12, 'saida_insumos',
-        $13, $14, $15, $16,
-        $17, $18, $19, $20,
-        $21, $22, $23, $24,
-        $25, $26, $27, $28, $29,
-        $30, $31, $32, $33, $34, $35, $36,
-        false, false, $37
+        $5, $6, $7, $8, $9, $10, $11, $12, $13,
+        $14, $15, $16, $17,
+        $18, $19, $20, $21,
+        $22, $23, $24, $25,
+        $26, $27, $28, $29, $30,
+        $31, $32, $33, $34, $35, $36, $37,
+        $38, $39, $40, null, $41
       )
       RETURNING id
       `,
@@ -318,6 +344,7 @@ export async function createContratoSaidaInsumos(input: ContratoSaidaInsumosCrea
         parceiroSnapshot?.codigo ?? null,
         parceiroSnapshot?.nome ?? null,
         parceiroSnapshot?.documento ?? null,
+        tipoContrato,
         normalizeDateInput(input.assinaturaEm),
         normalizeDateInput(input.prazoEntregaEm),
         normalizeDateInput(input.inicioEm),
@@ -342,6 +369,9 @@ export async function createContratoSaidaInsumos(input: ContratoSaidaInsumosCrea
         input.objeto ?? null,
         input.execucao ?? null,
         observacoes,
+        input.permuta ?? false,
+        input.contratoPermutaId ?? null,
+        input.aditivo ?? false,
         input.sapValorPago ?? 0,
       ],
     );
@@ -378,7 +408,7 @@ export async function updateContratoSaidaInsumos(id: number, input: ContratoSaid
       SELECT observacao
       FROM contrato.contrato c
       WHERE c.id = $1
-        AND ${SAIDA_INSUMOS_WHERE}
+        AND ${INSUMOS_WHERE}
       FOR UPDATE
       `,
       [id],
@@ -404,16 +434,16 @@ export async function updateContratoSaidaInsumos(id: number, input: ContratoSaid
     }
 
     mapUpdateField(input.referenciaContrato, "descricao", pushSet, (v) => String(v).trim());
+    mapUpdateField(input.tipoContrato, "tp_contrato", pushSet, normalizeTipoContrato);
     mapUpdateField(input.refObjectId, "ref_object_id", pushSet);
     mapUpdateField(input.assinaturaEm, "dt_assinatura", pushSet, normalizeDateInput);
     mapUpdateField(input.prazoEntregaEm, "prazo_entrega", pushSet, normalizeDateInput);
     mapUpdateField(input.inicioEm, "dt_inicio", pushSet, normalizeDateInput);
     mapUpdateField(input.vencimentoEm, "dt_vencimento", pushSet, normalizeDateInput);
 
-    pushSet("permuta", false);
-    pushSet("contrato_permuta_id", null);
-    pushSet("aditivo", false);
-    pushSet("tp_aditivo_id", null);
+    mapUpdateField(input.permuta, "permuta", pushSet);
+    mapUpdateField(input.contratoPermutaId, "contrato_permuta_id", pushSet);
+    mapUpdateField(input.aditivo, "aditivo", pushSet);
 
     mapUpdateField(input.contratoCedenteId, "contrato_cedente_id", pushSet);
     mapUpdateField(input.contratoAnteriorId, "contrato_anterior_id", pushSet);
@@ -461,6 +491,8 @@ export async function updateContratoSaidaInsumos(id: number, input: ContratoSaid
       mapas: input.mapas,
       comissionadoId: input.comissionadoId,
       emissorNotaId: input.emissorNotaId,
+      clausulaModeloId: input.clausulaModeloId,
+      clausulaTitulo: input.clausulaTitulo,
       empresaSap: input.empresaSap,
       parceiroSap: input.parceiroSap,
     });
@@ -470,6 +502,8 @@ export async function updateContratoSaidaInsumos(id: number, input: ContratoSaid
       input.mapas !== undefined ||
       input.comissionadoId !== undefined ||
       input.emissorNotaId !== undefined ||
+      input.clausulaModeloId !== undefined ||
+      input.clausulaTitulo !== undefined ||
       input.empresaSap !== undefined ||
       input.parceiroSap !== undefined;
 
@@ -497,7 +531,7 @@ export async function updateContratoSaidaInsumos(id: number, input: ContratoSaid
         UPDATE contrato.contrato c
         SET ${setClauses.join(", ")}
         WHERE c.id = ${idPlaceholder}
-          AND ${SAIDA_INSUMOS_WHERE}
+          AND ${INSUMOS_WHERE}
         RETURNING c.id
         `,
         values,
@@ -538,7 +572,7 @@ export async function changeContratoSaidaInsumosStatus(id: number, input: Contra
       SELECT c.status
       FROM contrato.contrato c
       WHERE c.id = $1
-        AND ${SAIDA_INSUMOS_WHERE}
+        AND ${INSUMOS_WHERE}
       FOR UPDATE
       `,
       [id],
@@ -555,7 +589,7 @@ export async function changeContratoSaidaInsumosStatus(id: number, input: Contra
         UPDATE contrato.contrato c
         SET status = $1, updated_on = now()
         WHERE c.id = $2
-          AND ${SAIDA_INSUMOS_WHERE}
+          AND ${INSUMOS_WHERE}
         `,
         [statusNovo, id],
       );
@@ -581,7 +615,7 @@ async function getNextNumeroContrato(client: PoolClient, empresaId: number | nul
     FROM contrato.contrato c
     WHERE ($1::bigint IS NULL OR c.empresa_id = $1)
       AND c.ano = $2
-      AND ${SAIDA_INSUMOS_WHERE}
+      AND ${INSUMOS_WHERE}
     `,
     [empresaId, exercicio],
   );
@@ -892,8 +926,8 @@ function mapPrevisaoRowToPayload(row: JsonObject): ContratoLinhaPayload {
 }
 
 function splitPrevisoesAndMapas(rows: JsonObject[]): { previsoes: ContratoLinhaPayload[]; mapas: ContratoLinhaPayload[] } {
-  const mapas = rows.map(mapPrevisaoRowToPayload);
-  return { previsoes: [], mapas };
+  const previsoes = rows.map(mapPrevisaoRowToPayload);
+  return { previsoes, mapas: [] };
 }
 
 function extractPayloadFromObservation(observacao: unknown): ContratoLinhaPayload | null {
@@ -930,6 +964,11 @@ function readEmpresaSapFromMeta(meta: JsonObject | null): ContratoEmpresaSapInpu
     codigo: toNullableString(row.codigo),
     nome,
     cnpj: toNullableString(row.cnpj),
+    rgIe: toNullableString(row.rgIe),
+    telefone: toNullableString(row.telefone),
+    email: toNullableString(row.email),
+    representanteLegal: toNullableString(row.representanteLegal),
+    endereco: toNullableString(row.endereco),
   };
 }
 
@@ -943,6 +982,15 @@ function readParceiroSapFromMeta(meta: JsonObject | null): ContratoParceiroSapIn
     codigo: toNullableString(row.codigo),
     nome,
     documento: toNullableString(row.documento),
+    rgIe: toNullableString(row.rgIe),
+    telefone: toNullableString(row.telefone),
+    email: toNullableString(row.email),
+    representanteLegal: toNullableString(row.representanteLegal),
+    cpf: toNullableString(row.cpf),
+    rg: toNullableString(row.rg),
+    profissao: toNullableString(row.profissao),
+    estadoCivil: toNullableString(row.estadoCivil),
+    endereco: toNullableString(row.endereco),
   };
 }
 
@@ -976,6 +1024,10 @@ function mergeMetadata(currentMeta: JsonObject | null, patch: MetadataPayload): 
       patch.comissionadoId !== undefined ? patch.comissionadoId : toNullableInteger(current.comissionadoId),
     emissorNotaId:
       patch.emissorNotaId !== undefined ? patch.emissorNotaId : toNullableInteger(current.emissorNotaId),
+    clausulaModeloId:
+      patch.clausulaModeloId !== undefined ? patch.clausulaModeloId : toNullableInteger(current.clausulaModeloId),
+    clausulaTitulo:
+      patch.clausulaTitulo !== undefined ? patch.clausulaTitulo : toNullableString(current.clausulaTitulo),
     empresaSap:
       patch.empresaSap !== undefined
         ? patch.empresaSap
@@ -991,6 +1043,8 @@ function mergeMetadata(currentMeta: JsonObject | null, patch: MetadataPayload): 
     Boolean(merged.mapas && merged.mapas.length > 0) ||
     merged.comissionadoId !== null ||
     merged.emissorNotaId !== null ||
+    merged.clausulaModeloId !== null ||
+    Boolean(merged.clausulaTitulo) ||
     Boolean(merged.empresaSap?.nome) ||
     Boolean(merged.parceiroSap?.nome);
 
@@ -1116,6 +1170,16 @@ function normalizeStatus(status: unknown): ContratoStatus {
   if (["inativo_cancelado", "inativo/cancelado", "inativo cancelado"].includes(parsed)) return "inativo_cancelado";
 
   return "aguardando_aprovacao";
+}
+
+function normalizeTipoContrato(value: unknown): "saida_insumos" | "entrada_insumos" {
+  const parsed = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+  if (parsed === "entrada_insumos" || parsed.includes("entrada")) return "entrada_insumos";
+  return "saida_insumos";
 }
 
 function normalizeEmpresaSnapshot(input: ContratoEmpresaSapInput | null | undefined) {

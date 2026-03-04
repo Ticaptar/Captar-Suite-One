@@ -102,9 +102,8 @@ export default function ContratoEntradaAnimaisListPage() {
         <ModuleHeader />
 
         <section className="card p-3">
-          <div className="legacy-toolbar">
+          <div className="legacy-toolbar compact-toolbar">
             <div className="legacy-toolbar-left">
-              <h1 className="legacy-title">Contrato de Entrada de Animais</h1>
               <div className="legacy-actions">
                 <Link href="/contratos/entrada-animais/novo" className="legacy-btn primary">
                   Criar
@@ -186,7 +185,7 @@ export default function ContratoEntradaAnimaisListPage() {
                   <th>Status</th>
                   <th>Tipo de Contrato</th>
                   <th>Início</th>
-                  <th>Valor Pago SAP</th>
+                  <th>Valor Total Itens</th>
                 </tr>
               </thead>
               <tbody>
@@ -222,7 +221,7 @@ export default function ContratoEntradaAnimaisListPage() {
                       </td>
                       <td>{tipoLabel(item.tipoContrato)}</td>
                       <td>{toDateLabel(item.inicioEm)}</td>
-                      <td>{toMoney(item.valorPagoSap)}</td>
+                      <td>{toMoney(item.valorTotalItens)}</td>
                     </tr>
                   ))}
               </tbody>

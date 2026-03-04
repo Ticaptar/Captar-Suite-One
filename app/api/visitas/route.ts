@@ -13,7 +13,7 @@ const validStatus = new Set<VisitaStatus>([
   "arquivada",
 ]);
 
-const validTipoContrato = new Set<VisitaTipoContrato>(["entrada_animais", "saida_insumos"]);
+const validTipoContrato = new Set<VisitaTipoContrato>(["entrada_animais"]);
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -114,6 +114,13 @@ function parseNonZeroInt(value: unknown, fallback: number): number {
   if (value === null || value === undefined || value === "") return fallback;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isNaN(parsed) || parsed === 0 ? fallback : parsed;
+}
+
+function parsePositiveInt(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 function parseOptionalNullablePositiveInt(value: unknown): number | null {

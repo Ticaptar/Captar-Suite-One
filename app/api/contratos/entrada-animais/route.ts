@@ -3,6 +3,7 @@ import {
   createContratoEntradaAnimais,
   listContratosEntradaAnimais,
 } from "@/lib/repositories/contratos-entrada-animais-repo";
+import { hydrateEmpresaSapSnapshot, hydrateParceiroSapSnapshot } from "@/lib/contracts/sap-snapshot";
 import type { ContratoStatus } from "@/lib/types/contrato";
 
 export const runtime = "nodejs";
@@ -71,19 +72,29 @@ export async function POST(request: Request) {
   const numero = parseOptionalPositiveInt(body.numero);
 
   if (!referenciaContrato) {
-    return NextResponse.json({ error: "referenciaContrato é obrigatório." }, { status: 400 });
+    return NextResponse.json({ error: "Referência do contrato é obrigatória." }, { status: 400 });
   }
   if (!numero) {
-    return NextResponse.json({ error: "numero é obrigatório na criação." }, { status: 400 });
+    return NextResponse.json({ error: "Número é obrigatório na criação." }, { status: 400 });
   }
 
   try {
+    const empresaSapInput = parseEmpresaSap(body.empresaSap);
+    const parceiroSapInput = parseParceiroSap(body.parceiroSap);
+    const comissionadoSapInput = parseParceiroSap(body.comissionadoSap);
+
+    const [empresaSap, parceiroSap, comissionadoSap] = await Promise.all([
+      hydrateEmpresaSapSnapshot(empresaSapInput),
+      hydrateParceiroSapSnapshot(parceiroSapInput),
+      hydrateParceiroSapSnapshot(comissionadoSapInput),
+    ]);
+
     const created = await createContratoEntradaAnimais({
       empresaId,
-      empresaSap: parseEmpresaSap(body.empresaSap),
+      empresaSap,
       parceiroId: parseOptionalPositiveInt(body.parceiroId),
-      parceiroSap: parseParceiroSap(body.parceiroSap),
-      comissionadoSap: parseParceiroSap(body.comissionadoSap),
+      parceiroSap,
+      comissionadoSap,
       exercicio: parseOptionalPositiveInt(body.exercicio),
       numero,
       referenciaContrato,
@@ -129,6 +140,7 @@ export async function POST(request: Request) {
       sapValorPago: parseOptionalNumber(body.sapValorPago),
       sapUltimoSyncEm: toOptionalString(body.sapUltimoSyncEm),
       dadosGerais: parseDadosGerais(body.dadosGerais),
+      outros: parseOutros(body.outros),
       custosResumo: parseCustosResumo(body.custosResumo),
       custosCategorias: parseCollectionRows(body.custosCategorias),
       itens: parseCollectionRows(body.itens),
@@ -136,6 +148,8 @@ export async function POST(request: Request) {
       financeiros: parseCollectionRows(body.financeiros),
       notas: parseCollectionRows(body.notas),
       clausulas: parseCollectionRows(body.clausulas),
+      clausulaModeloId: parseOptionalPositiveInt(body.clausulaModeloId),
+      clausulaTitulo: toOptionalString(body.clausulaTitulo),
       previsoes: parseCollectionRows(body.previsoes),
       mapas: parseCollectionRows(body.mapas),
       criadoPor: toOptionalString(body.criadoPor),
@@ -255,6 +269,25 @@ function parseCustosResumo(value: unknown) {
   };
 }
 
+function parseOutros(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const dados = value as Record<string, unknown>;
+  return {
+    dataEmbarque: toOptionalString(dados.dataEmbarque) ?? null,
+    dataPrevistaChegada: toOptionalString(dados.dataPrevistaChegada) ?? null,
+    freteConfinamento: toOptionalString(dados.freteConfinamento) ?? null,
+    fazendaDestino: toOptionalString(dados.fazendaDestino) ?? null,
+    fazendaOrigem: toOptionalString(dados.fazendaOrigem) ?? null,
+    descontoAcerto: toOptionalBoolean(dados.descontoAcerto) ?? null,
+    descricaoDesconto: toOptionalString(dados.descricaoDesconto) ?? null,
+    pesoReferencia: toOptionalString(dados.pesoReferencia) ?? null,
+    observacao: toOptionalString(dados.observacao) ?? null,
+  };
+}
+
 function parseCollectionRows(value: unknown): Record<string, string>[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value
@@ -277,6 +310,11 @@ function parseEmpresaSap(value: unknown) {
     codigo: toOptionalString(row.codigo) ?? null,
     nome,
     cnpj: toOptionalString(row.cnpj) ?? null,
+    rgIe: toOptionalString(row.rgIe) ?? null,
+    telefone: toOptionalString(row.telefone) ?? null,
+    email: toOptionalString(row.email) ?? null,
+    representanteLegal: toOptionalString(row.representanteLegal) ?? null,
+    endereco: toOptionalString(row.endereco) ?? null,
   };
 }
 
@@ -290,5 +328,14 @@ function parseParceiroSap(value: unknown) {
     codigo: toOptionalString(row.codigo) ?? null,
     nome,
     documento: toOptionalString(row.documento) ?? null,
+    rgIe: toOptionalString(row.rgIe) ?? null,
+    telefone: toOptionalString(row.telefone) ?? null,
+    email: toOptionalString(row.email) ?? null,
+    representanteLegal: toOptionalString(row.representanteLegal) ?? null,
+    cpf: toOptionalString(row.cpf) ?? null,
+    rg: toOptionalString(row.rg) ?? null,
+    profissao: toOptionalString(row.profissao) ?? null,
+    estadoCivil: toOptionalString(row.estadoCivil) ?? null,
+    endereco: toOptionalString(row.endereco) ?? null,
   };
 }

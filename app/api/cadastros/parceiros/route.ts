@@ -28,15 +28,15 @@ export async function GET(request: Request) {
   const search = searchParams.get("search")?.trim() ?? "";
   const limitParam = (searchParams.get("limit") ?? "").trim().toLowerCase();
   const unlimited = limitParam === "0" || limitParam === "all" || limitParam === "*";
-  const defaultLimit = search ? 5000 : 300;
+  const defaultLimit = search ? 5000 : 1000;
   const parsedLimit = Number.parseInt(limitParam || String(defaultLimit), 10);
   const limit = unlimited ? null : Math.min(Math.max(parsedLimit || defaultLimit, 1), 20000);
 
   try {
-    const fetchLimit = limit === null ? 100000 : Math.max(limit * 4, 300);
+    const fetchLimit = limit === null ? 100000 : Math.max(limit * 4, 1000);
     const localParceiros = await listLocalParceiros(search, fetchLimit);
     const cacheSap = await listSapCachedParceiros();
-    const shouldQuerySap = isSapServiceLayerConfigured() && search.trim().length > 0;
+    const shouldQuerySap = isSapServiceLayerConfigured();
 
     if (shouldQuerySap) {
       const sapParceiros = await listBusinessPartnersFromSap(search, fetchLimit);
@@ -66,7 +66,10 @@ export async function GET(request: Request) {
       sapOnly: true,
       sapExternalId: item.sapExternalId,
     }));
-    return NextResponse.json(cacheAsOptions.slice(0, limit ?? Number.MAX_SAFE_INTEGER));
+    const filteredCacheAsOptions = search
+      ? cacheAsOptions.filter((item) => matchesSearch(item, search))
+      : cacheAsOptions;
+    return NextResponse.json(filteredCacheAsOptions.slice(0, limit ?? Number.MAX_SAFE_INTEGER));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao listar parceiros.";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -437,6 +440,20 @@ function namesMatch(localName: unknown, sapName: unknown): boolean {
 function normalizeSapExternalId(codigo: string | null, nome: string, documento: string | null): string {
   const base = normalizeText(codigo) || normalizeDocument(documento) || normalizeName(nome).replace(/[^A-Z0-9]/g, "");
   return base || `SAP-PARCEIRO-${Date.now()}`;
+}
+
+function matchesSearch(item: Pick<ParceiroOption, "codigo" | "nome" | "documento">, search: string): boolean {
+  const term = normalizeText(search).toLowerCase();
+  if (!term) return true;
+  const termDigits = normalizeDocument(search);
+
+  const nome = normalizeText(item.nome).toLowerCase();
+  const codigo = normalizeText(item.codigo).toLowerCase();
+  const documento = normalizeDocument(item.documento);
+
+  if (nome.includes(term) || codigo.includes(term)) return true;
+  if (termDigits && documento && documento.includes(termDigits)) return true;
+  return false;
 }
 
 async function hasRelation(relation: string): Promise<boolean> {

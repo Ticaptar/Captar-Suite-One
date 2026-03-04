@@ -20,6 +20,8 @@ type ListFilters = {
 const VISITA_TABLE = "contrato.visita";
 const VISITA_ATIVIDADE_TABLE = "contrato.visita_atividade";
 const OBS_META_MARKER = "\n\n/*VISITA_META*/";
+const OBS_META_MARKER_BARE = "/*VISITA_META*/";
+let visitaExtraColumnsEnsured = false;
 
 type VisitaMetaPayload = {
   categoriaItens?: VisitaCategoriaItemPayload[] | null;
@@ -127,6 +129,8 @@ export async function getVisitaById(id: number) {
         coalesce(v.rebanho_atual, 0) AS "rebanhoAtual",
         v.informacoes_detalhadas AS "informacoesDetalhadas",
         v.categoria,
+        v.raca,
+        v.categoria_itens AS "categoriaItensData",
         v.observacoes,
         v.tipo_contrato_sugerido AS "tipoContratoSugerido",
         v.contrato_gerado_id AS "contratoGeradoId",
@@ -161,8 +165,12 @@ export async function getVisitaById(id: number) {
   const observacaoRaw = toNullableString(visitaBase.observacoes);
   const observacaoParsed = splitObservacoesAndMeta(observacaoRaw);
   visitaBase.observacoes = observacaoParsed.text;
-  visitaBase.categoriaItens = readCategoriaItensFromMeta(observacaoParsed.meta);
-  visitaBase.raca = readRacaFromMeta(observacaoParsed.meta);
+  const categoriaItensCol = normalizeCategoriaItens(visitaBase.categoriaItensData);
+  visitaBase.categoriaItens =
+    categoriaItensCol.length > 0
+      ? categoriaItensCol
+      : readCategoriaItensFromMeta(observacaoParsed.meta);
+  visitaBase.raca = toNullableString(visitaBase.raca) ?? readRacaFromMeta(observacaoParsed.meta);
 
   return {
     visita: mapVisitaRow(visitaBase),
@@ -179,10 +187,8 @@ export async function createVisita(input: VisitaCreateInput) {
   try {
     await client.query("BEGIN");
 
-    const observacoes = composeObservacoesWithMeta(
-      normalizeText(input.observacoes),
-      { categoriaItens: input.categoriaItens ?? [], raca: normalizeText(input.raca) },
-    );
+    const observacoes = normalizeText(input.observacoes);
+    const categoriaItens = normalizeCategoriaItens(input.categoriaItens ?? []);
 
     const insertResult = await client.query<{ id: number }>(
       `
@@ -209,13 +215,15 @@ export async function createVisita(input: VisitaCreateInput) {
         rebanho_atual,
         informacoes_detalhadas,
         categoria,
+        raca,
+        categoria_itens,
         observacoes,
         tipo_contrato_sugerido
       )
       VALUES (
         now(),
         now(),
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
       )
       RETURNING id
       `,
@@ -240,6 +248,8 @@ export async function createVisita(input: VisitaCreateInput) {
         input.rebanhoAtual ?? 0,
         normalizeText(input.informacoesDetalhadas),
         normalizeText(input.categoria),
+        normalizeText(input.raca),
+        serializeJsonArrayOrNull(categoriaItens),
         observacoes,
         input.tipoContratoSugerido ?? "entrada_animais",
       ],
@@ -266,9 +276,12 @@ export async function updateVisita(id: number, input: VisitaUpdateInput) {
   try {
     await client.query("BEGIN");
 
-    const lockResult = await client.query<{ id: number; observacoes: string | null }>(
+    const lockResult = await client.query<{ id: number; status: string | null; contratoGeradoId: number | null }>(
       `
-      SELECT id, observacoes
+      SELECT
+        id,
+        status,
+        contrato_gerado_id AS "contratoGeradoId"
       FROM ${VISITA_TABLE}
       WHERE id = $1
       FOR UPDATE
@@ -278,6 +291,10 @@ export async function updateVisita(id: number, input: VisitaUpdateInput) {
 
     if ((lockResult.rowCount ?? 0) === 0) {
       throw new Error("Visita nao encontrada.");
+    }
+    const locked = lockResult.rows[0];
+    if (locked.contratoGeradoId || ensureStatus(toText(locked.status)) === "contrato_gerado") {
+      throw new Error("Visita com contrato gerado nao pode ser editada.");
     }
 
     const sets: string[] = [];
@@ -308,16 +325,9 @@ export async function updateVisita(id: number, input: VisitaUpdateInput) {
     if (input.rebanhoAtual !== undefined) pushSet("rebanho_atual", input.rebanhoAtual ?? 0);
     if (input.informacoesDetalhadas !== undefined) pushSet("informacoes_detalhadas", normalizeText(input.informacoesDetalhadas));
     if (input.categoria !== undefined) pushSet("categoria", normalizeText(input.categoria));
-    const currentObs = splitObservacoesAndMeta(lockResult.rows[0].observacoes);
-    const nextMeta = mergeMeta(currentObs.meta, {
-      categoriaItens: input.categoriaItens,
-      raca: input.raca !== undefined ? normalizeText(input.raca) : undefined,
-    });
-    const metaChanged = input.categoriaItens !== undefined || input.raca !== undefined;
-    if (input.observacoes !== undefined || metaChanged) {
-      const nextObservacaoText = input.observacoes !== undefined ? normalizeText(input.observacoes) : currentObs.text;
-      pushSet("observacoes", composeObservacoesWithMeta(nextObservacaoText, nextMeta));
-    }
+    if (input.raca !== undefined) pushSet("raca", normalizeText(input.raca));
+    if (input.categoriaItens !== undefined) pushSet("categoria_itens", serializeJsonArrayOrNull(normalizeCategoriaItens(input.categoriaItens)));
+    if (input.observacoes !== undefined) pushSet("observacoes", normalizeText(input.observacoes));
     if (input.tipoContratoSugerido !== undefined) pushSet("tipo_contrato_sugerido", input.tipoContratoSugerido);
 
     if (sets.length > 0) {
@@ -405,7 +415,7 @@ function mapListRow(row: Record<string, unknown>): VisitaListItem {
   return {
     id: toNumber(row.id),
     status: ensureStatus(toText(row.status)),
-    dataVisita: toNullableString(row.dataVisita),
+    dataVisita: toDateOnlyString(row.dataVisita),
     parceiro: toNullableString(row.parceiro),
     responsavel: toNullableString(row.responsavel),
     endereco: toNullableString(row.endereco),
@@ -419,7 +429,7 @@ function mapVisitaRow(row: Record<string, unknown>): VisitaRecord {
     id: toNumber(row.id),
     empresaId: toNumber(row.empresaId),
     status: ensureStatus(toText(row.status)),
-    dataVisita: toNullableString(row.dataVisita),
+    dataVisita: toDateOnlyString(row.dataVisita),
     parceiroId: toNullableInteger(row.parceiroId),
     parceiroCodigo: toNullableString(row.parceiroCodigo),
     parceiroNome: toNullableString(row.parceiroNome),
@@ -450,10 +460,10 @@ function mapVisitaRow(row: Record<string, unknown>): VisitaRecord {
 function mapAtividadeRow(row: Record<string, unknown>): VisitaAtividadePayload {
   return {
     tipoAtividade: toText(row.tipoAtividade),
-    dataVencimento: toNullableString(row.dataVencimento) ?? "",
+    dataVencimento: toDateOnlyString(row.dataVencimento) ?? "",
     resumo: toText(row.resumo),
     responsavel: toText(row.responsavel),
-    dataRealizacao: toNullableString(row.dataRealizacao) ?? "",
+    dataRealizacao: toDateOnlyString(row.dataRealizacao) ?? "",
     descricaoAtividade: toText(row.descricaoAtividade),
   };
 }
@@ -465,17 +475,17 @@ function normalizeCategoriaItens(value: unknown): VisitaCategoriaItemPayload[] {
     .map((item) => {
       const row = item as Record<string, unknown>;
       return {
-        categoria: toText(row.categoria),
-        raca: toText(row.raca),
-        qualidade: toText(row.qualidade),
-        condicaoPagto: toText(row.condicaoPagto),
-        pesoAproxArroba: toText(row.pesoAproxArroba),
-        rcPercentual: toText(row.rcPercentual),
-        valorArroba: toText(row.valorArroba),
-        valorTabelaArroba: toText(row.valorTabelaArroba),
-        freteArroba: toText(row.freteArroba),
-        valorIcmsArroba: toText(row.valorIcmsArroba),
-        cabecas: toText(row.cabecas),
+        categoria: toText(readCaseInsensitive(row, ["categoria"])),
+        raca: toText(readCaseInsensitive(row, ["raca"])),
+        qualidade: toText(readCaseInsensitive(row, ["qualidade"])),
+        condicaoPagto: toText(readCaseInsensitive(row, ["condicaoPagto", "condicaoPagamento", "condicao"])),
+        pesoAproxArroba: toText(readCaseInsensitive(row, ["pesoAproxArroba", "pesoAprox", "pesoArroba"])),
+        rcPercentual: toText(readCaseInsensitive(row, ["rcPercentual", "rc"])),
+        valorArroba: toText(readCaseInsensitive(row, ["valorArroba", "valor"])),
+        valorTabelaArroba: toText(readCaseInsensitive(row, ["valorTabelaArroba", "valorTabela"])),
+        freteArroba: toText(readCaseInsensitive(row, ["freteArroba", "frete"])),
+        valorIcmsArroba: toText(readCaseInsensitive(row, ["valorIcmsArroba", "valorIcms"])),
+        cabecas: toText(readCaseInsensitive(row, ["cabecas", "quantidadeCabecas"])),
       };
     });
 }
@@ -495,6 +505,20 @@ async function assertVisitaTables(pool: Pool) {
       "Tabelas contrato.visita/contrato.visita_atividade nao encontradas. Execute docs/sql/005_visitas_schema.sql.",
     );
   }
+
+  await ensureVisitaExtraColumns(pool);
+}
+
+async function ensureVisitaExtraColumns(pool: Pool) {
+  if (visitaExtraColumnsEnsured) return;
+  await pool.query(
+    `
+    ALTER TABLE ${VISITA_TABLE}
+      ADD COLUMN IF NOT EXISTS raca VARCHAR(120) NULL,
+      ADD COLUMN IF NOT EXISTS categoria_itens JSONB NULL;
+    `,
+  );
+  visitaExtraColumnsEnsured = true;
 }
 
 function ensureStatus(value: unknown): VisitaStatus {
@@ -505,11 +529,14 @@ function ensureStatus(value: unknown): VisitaStatus {
 
 function splitObservacoesAndMeta(observacoes: string | null): { text: string | null; meta: Record<string, unknown> | null } {
   if (!observacoes) return { text: null, meta: null };
-  const markerIndex = observacoes.lastIndexOf(OBS_META_MARKER);
+  const markerIndexWithPrefix = observacoes.lastIndexOf(OBS_META_MARKER);
+  const markerIndexBare = observacoes.lastIndexOf(OBS_META_MARKER_BARE);
+  const markerIndex = markerIndexWithPrefix >= 0 ? markerIndexWithPrefix : markerIndexBare;
   if (markerIndex < 0) return { text: observacoes, meta: null };
 
+  const markerLength = markerIndexWithPrefix >= 0 ? OBS_META_MARKER.length : OBS_META_MARKER_BARE.length;
   const text = observacoes.slice(0, markerIndex).trim() || null;
-  const metaRaw = observacoes.slice(markerIndex + OBS_META_MARKER.length).trim();
+  const metaRaw = observacoes.slice(markerIndex + markerLength).trim();
   const meta = parseJsonObject(metaRaw);
   return { text, meta };
 }
@@ -523,13 +550,13 @@ function composeObservacoesWithMeta(observacoes: string | null, meta: VisitaMeta
 }
 
 function readCategoriaItensFromMeta(meta: Record<string, unknown> | null): VisitaCategoriaItemPayload[] {
-  if (!meta?.categoriaItens || !Array.isArray(meta.categoriaItens)) return [];
-  return normalizeCategoriaItens(meta.categoriaItens);
+  const categoriaItensRaw = readCaseInsensitive(meta, ["categoriaItens", "categoriaitens"]);
+  if (!Array.isArray(categoriaItensRaw)) return [];
+  return normalizeCategoriaItens(categoriaItensRaw);
 }
 
 function readRacaFromMeta(meta: Record<string, unknown> | null): string | null {
-  if (!meta?.raca) return null;
-  return normalizeText(meta.raca);
+  return normalizeText(readCaseInsensitive(meta, ["raca"]));
 }
 
 function mergeMeta(currentMeta: Record<string, unknown> | null, patch: VisitaMetaPayload): VisitaMetaPayload | null {
@@ -537,16 +564,19 @@ function mergeMeta(currentMeta: Record<string, unknown> | null, patch: VisitaMet
   const categoriaItens =
     patch.categoriaItens !== undefined
       ? patch.categoriaItens
-      : current.categoriaItens && Array.isArray(current.categoriaItens)
-        ? normalizeCategoriaItens(current.categoriaItens)
+      : readCaseInsensitive(current, ["categoriaItens", "categoriaitens"]) &&
+          Array.isArray(readCaseInsensitive(current, ["categoriaItens", "categoriaitens"]))
+        ? normalizeCategoriaItens(readCaseInsensitive(current, ["categoriaItens", "categoriaitens"]))
         : [];
-  const raca = patch.raca !== undefined ? patch.raca : normalizeText(current.raca);
+  const raca = patch.raca !== undefined ? patch.raca : normalizeText(readCaseInsensitive(current, ["raca"]));
 
   if ((!categoriaItens || categoriaItens.length === 0) && !raca) return null;
   return { categoriaItens, raca };
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== "string") return null;
   try {
     const parsed = JSON.parse(value);
@@ -563,6 +593,11 @@ function serializeJsonOrNull(value: unknown): string | null {
   const obj = value as Record<string, unknown>;
   if (Object.keys(obj).length === 0) return null;
   return JSON.stringify(obj);
+}
+
+function serializeJsonArrayOrNull(value: unknown[]): string | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return JSON.stringify(value);
 }
 
 function normalizeDateInput(value: unknown): string | null {
@@ -589,6 +624,28 @@ function toNullableString(value: unknown): string | null {
   return text.length === 0 ? null : text;
 }
 
+function toDateOnlyString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+
+  const text = String(value).trim();
+  if (!text) return null;
+
+  const isoPrefix = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoPrefix) return isoPrefix[1];
+
+  const brDate = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brDate) return `${brDate[3]}-${brDate[2]}-${brDate[1]}`;
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
 function toNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -603,4 +660,23 @@ function toNullableInteger(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readCaseInsensitive(
+  row: Record<string, unknown> | null | undefined,
+  keys: string[],
+): unknown {
+  if (!row || typeof row !== "object") return undefined;
+
+  for (const key of keys) {
+    if (key in row) return row[key];
+  }
+
+  const normalizedEntries = Object.entries(row).map(([key, value]) => [key.toLowerCase(), value] as const);
+  for (const key of keys) {
+    const found = normalizedEntries.find(([entryKey]) => entryKey === key.toLowerCase());
+    if (found) return found[1];
+  }
+
+  return undefined;
 }
