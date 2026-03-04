@@ -15,6 +15,41 @@ npm install
 npm run dev
 ```
 
+## Deploy com Docker (Servidor)
+
+1. Crie o arquivo de ambiente de producao:
+
+```bash
+cp .env.production.example .env.production
+```
+
+2. Preencha a `.env.production` com suas credenciais reais (`DATABASE_URL`, SAP e `APP_PORT`).
+
+3. Suba o servico:
+
+```bash
+docker compose up -d --build
+```
+
+4. Verifique os logs:
+
+```bash
+docker compose logs -f captarsuite
+```
+
+5. Para atualizar em nova versao:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+Arquivos de deploy:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `.env.production.example`
+
 ## Banco de dados
 
 Defina a variavel `DATABASE_URL` para habilitar as APIs.

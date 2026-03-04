@@ -6,6 +6,8 @@ import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
 import type { ContratoEntradaAnimaisListItem } from "@/lib/types/contrato";
 
+export const dynamic = "force-dynamic";
+
 type ListaResponse = {
   items: ContratoEntradaAnimaisListItem[];
   total: number;
