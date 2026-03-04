@@ -25,6 +25,7 @@ export const moduleDefinitions: ModuleDefinition[] = [
       // { label: "Habilitacao P/ Venda", href: "#" },
       // { label: "Pre Oferta", href: "#" },
       // { label: "Acerto Frete", href: "#" },
+      { label: "Mapa de Pesagem", href: "/mapa-pesagem" },
       // { label: "Tabela @ Produzida", href: "#" },
     ],
   },
@@ -33,9 +34,7 @@ export const moduleDefinitions: ModuleDefinition[] = [
     label: "Pesagens",
     links: [
       { label: "Pesagem de Entrada de Animais", href: "/pesagens/entrada-animais" },
-      { label: "Mapa de Pesagem", href: "/mapa-pesagem" },
     ],
-    
   },
   {
     id: "configuracoes",

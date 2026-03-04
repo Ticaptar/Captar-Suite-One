@@ -26,6 +26,8 @@ type SapCachedParceiroRow = {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const search = searchParams.get("search")?.trim() ?? "";
+  const noCache = searchParams.get("noCache") === "1";
+  const localOnly = searchParams.get("localOnly") === "1";
   const limitParam = (searchParams.get("limit") ?? "").trim().toLowerCase();
   const unlimited = limitParam === "0" || limitParam === "all" || limitParam === "*";
   const defaultLimit = search ? 5000 : 1000;
@@ -36,10 +38,12 @@ export async function GET(request: Request) {
     const fetchLimit = limit === null ? 100000 : Math.max(limit * 4, 1000);
     const localParceiros = await listLocalParceiros(search, fetchLimit);
     const cacheSap = await listSapCachedParceiros();
-    const shouldQuerySap = isSapServiceLayerConfigured();
+    const shouldQuerySap = isSapServiceLayerConfigured() && !localOnly;
 
     if (shouldQuerySap) {
-      const sapParceiros = await listBusinessPartnersFromSap(search, fetchLimit);
+      const sapParceiros = await listBusinessPartnersFromSap(search, fetchLimit, {
+        disableCache: noCache,
+      });
       const mapeados = mapParceirosSapToLocal(sapParceiros, localParceiros);
       const sapOnly = mapSapParceirosToSapOnlyOptions(sapParceiros, mapeados, cacheSap);
       const mappedLocalIds = new Set(mapeados.map((item) => item.id));

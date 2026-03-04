@@ -52,9 +52,25 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Status invalido." }, { status: 400 });
   }
 
+  const pesoBruto = parseOptionalNumber(body.pesoBruto);
+  const pesoTara = parseOptionalNumber(body.pesoTara);
+  const operacaoInformada = toOptionalNullableString(body.operacao);
+
   try {
+    const current = await getPesagemEntradaAnimaisById(parsedId);
+    if (!current) {
+      return NextResponse.json({ error: "Pesagem nao encontrada." }, { status: 404 });
+    }
+
+    const fluxo = resolveFluxoPesagem({
+      status: status ?? current.status,
+      pesoBruto: resolvePesoForFlow(pesoBruto, current.pesoBruto),
+      pesoTara: resolvePesoForFlow(pesoTara, current.pesoTara),
+      operacaoInformada: operacaoInformada ?? current.operacao,
+    });
+
     const updated = await updatePesagemEntradaAnimais(parsedId, {
-      status,
+      status: fluxo.status,
       numeroTicket: toOptionalNullableString(body.numeroTicket),
       contratoId: parseOptionalNullablePositiveInt(body.contratoId),
       contratoReferencia: toOptionalNullableString(body.contratoReferencia),
@@ -84,19 +100,22 @@ export async function PATCH(request: Request, { params }: Params) {
       kmFinal: parseOptionalNumber(body.kmFinal),
       kmTotal: parseOptionalNumber(body.kmTotal),
       observacao: toOptionalNullableString(body.observacao),
-      pesoBruto: parseOptionalNumber(body.pesoBruto),
-      pesoTara: parseOptionalNumber(body.pesoTara),
+      pesoBruto,
+      pesoTara,
       pesoLiquido: parseOptionalNumber(body.pesoLiquido),
-      operacao: toOptionalNullableString(body.operacao),
+      operacao: fluxo.operacao,
       documentosFiscais: body.documentosFiscais !== undefined ? parseDocumentos(body.documentosFiscais) : undefined,
       motivosAtraso: body.motivosAtraso !== undefined ? parseMotivos(body.motivosAtraso) : undefined,
       motivosEspera: body.motivosEspera !== undefined ? parseMotivos(body.motivosEspera) : undefined,
       calendario: body.calendario !== undefined ? parseCalendario(body.calendario) : undefined,
+      gtaRows: body.gtaRows !== undefined ? parseGtaRows(body.gtaRows) : undefined,
+      fechamento: body.fechamento !== undefined ? parseFechamento(body.fechamento) : undefined,
     });
     return NextResponse.json(updated);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao atualizar pesagem.";
-    const code = message.toLowerCase().includes("nao encontrada") ? 404 : 500;
+    const normalized = message.toLowerCase();
+    const code = normalized.includes("nao encontrada") ? 404 : normalized.includes("fluxo invalido") ? 400 : 500;
     return NextResponse.json({ error: message }, { status: code });
   }
 }
@@ -172,6 +191,104 @@ function parseCalendario(value: unknown) {
         valor: parseOptionalNumber(row.valor) ?? 0,
       };
     });
+}
+
+function parseGtaRows(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      return {
+        gta: String(row.gta ?? "").trim(),
+        quantidadeMachos: parseOptionalInteger(row.quantidadeMachos) ?? 0,
+        quantidadeFemeas: parseOptionalInteger(row.quantidadeFemeas) ?? 0,
+        quantidadeTotal: parseOptionalInteger(row.quantidadeTotal) ?? 0,
+      };
+    });
+}
+
+function parseFechamento(value: unknown) {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return {
+    tabelaFrete: toOptionalNullableString(row.tabelaFrete),
+    calculoFrete: toOptionalNullableString(row.calculoFrete),
+    unidadeMedidaFrete: toOptionalNullableString(row.unidadeMedidaFrete),
+    valorUnitarioFrete: parseOptionalNumber(row.valorUnitarioFrete) ?? 0,
+    valorCombustivel: parseOptionalNumber(row.valorCombustivel) ?? 0,
+    valorPedagio: parseOptionalNumber(row.valorPedagio) ?? 0,
+    outrasDespesas: parseOptionalNumber(row.outrasDespesas) ?? 0,
+    litragem: parseOptionalNumber(row.litragem) ?? 0,
+    valorCombLitro: parseOptionalNumber(row.valorCombLitro) ?? 0,
+    valorDiaria: parseOptionalNumber(row.valorDiaria) ?? 0,
+    valorComissao: parseOptionalNumber(row.valorComissao) ?? 0,
+    valorFrete: parseOptionalNumber(row.valorFrete) ?? 0,
+    pesagemOrigem: toOptionalNullableString(row.pesagemOrigem),
+    dataVencimento: toOptionalNullableString(row.dataVencimento),
+    qtdAnimais: parseOptionalInteger(row.qtdAnimais) ?? 0,
+    qtdAnimaisOrigem: parseOptionalInteger(row.qtdAnimaisOrigem) ?? 0,
+    mapaPesagem: toOptionalNullableString(row.mapaPesagem),
+    cte: toOptionalNullableString(row.cte),
+    nfExterna: toOptionalNullableString(row.nfExterna),
+  };
+}
+
+function parseOptionalInteger(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function resolvePesoForFlow(next: number | null | undefined, current: number): number {
+  if (next === undefined) return Math.max(0, Number(current ?? 0));
+  if (next === null) return 0;
+  return Math.max(0, Number(next));
+}
+
+function resolveFluxoPesagem(args: {
+  status: PesagemStatus;
+  pesoBruto: number;
+  pesoTara: number;
+  operacaoInformada: string | null | undefined;
+}): { status: PesagemStatus; operacao: string } {
+  const bruto = Math.max(0, Number(args.pesoBruto ?? 0));
+  const tara = Math.max(0, Number(args.pesoTara ?? 0));
+  const requestedStatus = args.status;
+  const operacaoInformada = (args.operacaoInformada ?? "").trim();
+
+  if (tara > 0 && bruto <= 0) {
+    throw new Error("Fluxo invalido: capture o peso bruto antes da tara.");
+  }
+
+  if (requestedStatus === "cancelado") {
+    return { status: "cancelado", operacao: "PESAGEM CANCELADA" };
+  }
+
+  if (requestedStatus === "fechado") {
+    return { status: "fechado", operacao: "PESAGEM FECHADA" };
+  }
+
+  if (bruto <= 0 && tara <= 0) {
+    return {
+      status: "disponivel",
+      operacao: operacaoInformada || "CAMINHAO AGUARDANDO ENTRADA",
+    };
+  }
+
+  if (bruto > 0 && tara <= 0) {
+    return {
+      status: "disponivel",
+      operacao: "CAMINHAO EM RETORNO PARA TARA",
+    };
+  }
+
+  return {
+    status: "peso_finalizado",
+    operacao: "CAMINHAO RETORNOU - PESO FINALIZADO",
+  };
 }
 
 function toBoolean(value: unknown): boolean {

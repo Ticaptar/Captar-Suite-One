@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
+import { queryPnCatalog, upsertPnCatalogItem } from "@/lib/pn-catalog-client";
 import type { VisitaAtividadePayload, VisitaCategoriaItemPayload, VisitaRecord, VisitaStatus, VisitaTipoContrato } from "@/lib/types/visita";
 
 type EmpresaOption = { id: number; codigo: string | null; nome: string };
@@ -232,6 +233,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
         parceiroNome: option.nome ?? "",
       }));
       setParceiros((prev) => upsertParceiroOption(prev, option));
+      upsertPnCatalogItem(option);
     } else if (pnPickerTarget === "responsavel") {
       setForm((p) => ({
         ...p,
@@ -552,14 +554,7 @@ function SimpleTable({ headers, rows, onRemove }: { headers: string[]; rows: str
 }
 
 async function fetchParceiros(search: string): Promise<ParceiroOption[]> {
-  const params = new URLSearchParams();
-  const term = search.trim();
-  if (term) params.set("search", term);
-  params.set("limit", term ? "5000" : "1000");
-  params.set("_ts", String(Date.now()));
-  const r = await fetch(`/api/cadastros/parceiros?${params.toString()}`, { cache: "no-store" });
-  if (!r.ok) return [];
-  return (await r.json()) as ParceiroOption[];
+  return (await queryPnCatalog(search, { emptyLimit: 1000, searchLimit: 5000 })) as ParceiroOption[];
 }
 function labelOption(o: ParceiroOption) { return `${o.codigo ?? "SEM-COD"} - ${o.nome}`; }
 function upsertParceiroOption(list: ParceiroOption[], next: ParceiroOption): ParceiroOption[] {

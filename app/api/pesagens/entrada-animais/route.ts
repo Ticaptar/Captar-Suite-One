@@ -54,9 +54,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Status invalido." }, { status: 400 });
   }
 
+  const pesoBruto = parseOptionalNumber(body.pesoBruto);
+  const pesoTara = parseOptionalNumber(body.pesoTara);
+  const operacaoInformada = toOptionalNullableString(body.operacao);
+
+  let fluxo: { status: PesagemStatus; operacao: string };
+  try {
+    fluxo = resolveFluxoPesagem({
+      status: status ?? "disponivel",
+      pesoBruto,
+      pesoTara,
+      operacaoInformada,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Fluxo de pesagem invalido.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+
   try {
     const created = await createPesagemEntradaAnimais({
-      status,
+      status: fluxo.status,
       tipo: "entrada_animais",
       numeroTicket: toOptionalNullableString(body.numeroTicket),
       contratoId: parseOptionalNullablePositiveInt(body.contratoId),
@@ -87,14 +104,16 @@ export async function POST(request: Request) {
       kmFinal: parseOptionalNumber(body.kmFinal),
       kmTotal: parseOptionalNumber(body.kmTotal),
       observacao: toOptionalNullableString(body.observacao),
-      pesoBruto: parseOptionalNumber(body.pesoBruto),
-      pesoTara: parseOptionalNumber(body.pesoTara),
+      pesoBruto,
+      pesoTara,
       pesoLiquido: parseOptionalNumber(body.pesoLiquido),
-      operacao: toOptionalNullableString(body.operacao),
+      operacao: fluxo.operacao,
       documentosFiscais: parseDocumentos(body.documentosFiscais),
       motivosAtraso: parseMotivos(body.motivosAtraso),
       motivosEspera: parseMotivos(body.motivosEspera),
       calendario: parseCalendario(body.calendario),
+      gtaRows: parseGtaRows(body.gtaRows),
+      fechamento: parseFechamento(body.fechamento),
     });
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
@@ -178,6 +197,96 @@ function parseCalendario(value: unknown) {
         valor: parseOptionalNumber(row.valor) ?? 0,
       };
     });
+}
+
+function parseGtaRows(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      return {
+        gta: String(row.gta ?? "").trim(),
+        quantidadeMachos: parseOptionalInteger(row.quantidadeMachos) ?? 0,
+        quantidadeFemeas: parseOptionalInteger(row.quantidadeFemeas) ?? 0,
+        quantidadeTotal: parseOptionalInteger(row.quantidadeTotal) ?? 0,
+      };
+    });
+}
+
+function parseFechamento(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return {
+    tabelaFrete: toOptionalNullableString(row.tabelaFrete),
+    calculoFrete: toOptionalNullableString(row.calculoFrete),
+    unidadeMedidaFrete: toOptionalNullableString(row.unidadeMedidaFrete),
+    valorUnitarioFrete: parseOptionalNumber(row.valorUnitarioFrete) ?? 0,
+    valorCombustivel: parseOptionalNumber(row.valorCombustivel) ?? 0,
+    valorPedagio: parseOptionalNumber(row.valorPedagio) ?? 0,
+    outrasDespesas: parseOptionalNumber(row.outrasDespesas) ?? 0,
+    litragem: parseOptionalNumber(row.litragem) ?? 0,
+    valorCombLitro: parseOptionalNumber(row.valorCombLitro) ?? 0,
+    valorDiaria: parseOptionalNumber(row.valorDiaria) ?? 0,
+    valorComissao: parseOptionalNumber(row.valorComissao) ?? 0,
+    valorFrete: parseOptionalNumber(row.valorFrete) ?? 0,
+    pesagemOrigem: toOptionalNullableString(row.pesagemOrigem),
+    dataVencimento: toOptionalNullableString(row.dataVencimento),
+    qtdAnimais: parseOptionalInteger(row.qtdAnimais) ?? 0,
+    qtdAnimaisOrigem: parseOptionalInteger(row.qtdAnimaisOrigem) ?? 0,
+    mapaPesagem: toOptionalNullableString(row.mapaPesagem),
+    cte: toOptionalNullableString(row.cte),
+    nfExterna: toOptionalNullableString(row.nfExterna),
+  };
+}
+
+function parseOptionalInteger(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function resolveFluxoPesagem(args: {
+  status: PesagemStatus;
+  pesoBruto: number | null;
+  pesoTara: number | null;
+  operacaoInformada: string | null;
+}): { status: PesagemStatus; operacao: string } {
+  const bruto = Math.max(0, Number(args.pesoBruto ?? 0));
+  const tara = Math.max(0, Number(args.pesoTara ?? 0));
+  const requestedStatus = args.status;
+  const operacaoInformada = args.operacaoInformada;
+
+  if (tara > 0 && bruto <= 0) {
+    throw new Error("Fluxo invalido: capture o peso bruto antes da tara.");
+  }
+
+  if (requestedStatus === "cancelado") {
+    return { status: "cancelado", operacao: "PESAGEM CANCELADA" };
+  }
+
+  if (requestedStatus === "fechado") {
+    return { status: "fechado", operacao: "PESAGEM FECHADA" };
+  }
+
+  if (bruto <= 0 && tara <= 0) {
+    return {
+      status: "disponivel",
+      operacao: operacaoInformada?.trim() || "CAMINHAO AGUARDANDO ENTRADA",
+    };
+  }
+
+  if (bruto > 0 && tara <= 0) {
+    return {
+      status: "disponivel",
+      operacao: "CAMINHAO EM RETORNO PARA TARA",
+    };
+  }
+
+  return {
+    status: "peso_finalizado",
+    operacao: "CAMINHAO RETORNOU - PESO FINALIZADO",
+  };
 }
 
 function toBoolean(value: unknown): boolean {

@@ -519,13 +519,38 @@ function normalizeNextPath(nextLink: string): string {
   return `/${nextLink}`;
 }
 
-export async function listBusinessPartnersFromSap(search: string, limit: number): Promise<SapBusinessPartner[]> {
+export async function listBusinessPartnersFromSap(
+  search: string,
+  limit: number,
+  options?: { disableCache?: boolean },
+): Promise<SapBusinessPartner[]> {
   if (!isSapServiceLayerConfigured()) {
     return [];
   }
 
   const maxItems = !Number.isFinite(limit) || limit <= 0 ? 20000 : Math.min(Math.max(limit, 1), 20000);
   const searchTerm = search.trim();
+  const disableCache = Boolean(options?.disableCache);
+
+  if (disableCache) {
+    const fresh = searchTerm
+      ? await loadPartnersBySearch(searchTerm, maxItems)
+      : await loadPartners();
+
+    if (!searchTerm) {
+      return fresh.slice(0, maxItems);
+    }
+
+    const searchNormalized = normalizeSearchText(searchTerm);
+    const searchDoc = searchNormalized.replace(/\D/g, "");
+    const filtered = fresh.filter((item) =>
+      normalizeSearchText(item.cardName).includes(searchNormalized) ||
+      normalizeSearchText(item.cardCode).includes(searchNormalized) ||
+      (searchDoc ? (item.document ?? "").includes(searchDoc) : false),
+    );
+    return filtered.slice(0, maxItems);
+  }
+
   if (searchTerm) {
     const [fromSearch, mapped] = await Promise.all([loadPartnersBySearch(searchTerm, maxItems), getCachedPartners()]);
 

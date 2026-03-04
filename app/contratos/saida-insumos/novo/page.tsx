@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
+import { queryPnCatalog } from "@/lib/pn-catalog-client";
 import type { ContratoStatus } from "@/lib/types/contrato";
 
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
@@ -444,19 +445,10 @@ export default function NovoContratoSaidaInsumosPage() {
       setLoadingParceiros(true);
       try {
         const term = parceiroSearch.trim();
-        const params = new URLSearchParams();
-        params.set("limit", term.length >= 2 ? "5000" : "1500");
-        if (term) params.set("search", term);
-        const parceirosUrl = `/api/cadastros/parceiros?${params.toString()}`;
-        if (typeof window !== "undefined") {
-          console.info("[DEBUG PN][Saida] URL:", parceirosUrl);
-        }
-        const response = await fetch(parceirosUrl, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Falha ao carregar parceiros.");
-        const data = (await response.json()) as ParceiroOption[];
+        const data = (await queryPnCatalog(term, {
+          emptyLimit: 1500,
+          searchLimit: 5000,
+        })) as ParceiroOption[];
         if (active) {
           setParceiros((prev) => {
             if (term) return data;
@@ -705,12 +697,13 @@ export default function NovoContratoSaidaInsumosPage() {
   }, [form.parceiroId, modalType, parceiros]);
 
   useEffect(() => {
-    if (modalType !== "item") return;
+    if (modalType !== "item" && modalType !== "frete") return;
     const term = itemSearch.trim();
+    const selectedCatalogId = modalType === "frete" ? (draft.equipamentoId ?? "") : itemDraft.itemId;
     if (!term) {
       setItemCatalog((prev) => {
-        const selectedFromPrev = prev.itens.find((option) => option.value === itemDraft.itemId);
-        const selectedFromBase = baseItemOptions.find((option) => option.value === itemDraft.itemId);
+        const selectedFromPrev = prev.itens.find((option) => option.value === selectedCatalogId);
+        const selectedFromBase = baseItemOptions.find((option) => option.value === selectedCatalogId);
         const selected = selectedFromPrev ?? selectedFromBase;
         return {
           ...prev,
@@ -741,8 +734,8 @@ export default function NovoContratoSaidaInsumosPage() {
         if (!active) return;
         const itensEncontrados = normalizeCatalogOptions(data.itens);
         setItemCatalog((prev) => {
-          const selectedFromPrev = prev.itens.find((option) => option.value === itemDraft.itemId);
-          const selectedFromBase = baseItemOptions.find((option) => option.value === itemDraft.itemId);
+          const selectedFromPrev = prev.itens.find((option) => option.value === selectedCatalogId);
+          const selectedFromBase = baseItemOptions.find((option) => option.value === selectedCatalogId);
           const selected = selectedFromPrev ?? selectedFromBase;
           return {
             ...prev,
@@ -766,7 +759,7 @@ export default function NovoContratoSaidaInsumosPage() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [baseItemOptions, itemDraft.itemId, itemSearch, modalType]);
+  }, [baseItemOptions, draft.equipamentoId, itemDraft.itemId, itemSearch, modalType]);
 
   useEffect(() => {
     if (!isEditMode || !editingContratoId || Number.isNaN(editingContratoId)) return;
@@ -2250,6 +2243,8 @@ export default function NovoContratoSaidaInsumosPage() {
                 options={itemCatalog.itens}
                 value={draft.equipamentoId ?? ""}
                 listId="saida-frete-equipamento-id"
+                loading={loadingItensSap}
+                onSearchTextChange={setItemSearch}
                 onValueChange={(value) => setDraft((prev) => ({ ...prev, equipamentoId: value }))}
               />
             </div>
@@ -2793,7 +2788,11 @@ function ClausulasTab({
 }
 
 function Placeholder({ text }: { text: string }) {
-  return <section className="mt-2 rounded-md border border-[#cdd1df] bg-white p-4"><p className="text-sm text-[#51597a]">{text}</p></section>;
+  return (
+    <section className="placeholder-panel mt-2 p-4">
+      <p className="placeholder-panel-text text-sm">{text}</p>
+    </section>
+  );
 }
 
 function LegacyModal({
@@ -2870,15 +2869,9 @@ function CatalogAutocompleteField({
   const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
   const [text, setText] = useState(selectedLabel);
   const [isFocused, setIsFocused] = useState(false);
-  const inputValue = isFocused ? text : value ? selectedLabel || text : text;
+  const stableSelectedLabel = selectedLabel || normalizeItemDisplayLabel(value) || text;
+  const inputValue = isFocused ? text : value ? stableSelectedLabel : text;
   const filteredOptions = filterCatalogOptions(options, inputValue, value);
-
-  useEffect(() => {
-    if (isFocused) return;
-    if (value && selectedLabel) {
-      setText(selectedLabel);
-    }
-  }, [isFocused, selectedLabel, value]);
 
   function handleChange(nextText: string) {
     setText(nextText);
@@ -2892,12 +2885,11 @@ function CatalogAutocompleteField({
 
     const exact = options.find((option) => {
       const labelTerm = normalizeSearchTerm(option.label);
-      const valueTerm = normalizeSearchTerm(option.value);
+      const valueTerm = normalizeSearchTerm(stripSapPrefix(option.value));
       return labelTerm === term || valueTerm === term;
     });
 
     if (exact) {
-      setText(exact.label);
       onValueChange(exact.value);
       return;
     }
@@ -2922,8 +2914,8 @@ function CatalogAutocompleteField({
         }}
         onBlur={() => {
           setIsFocused(false);
-          if (value && selectedLabel) {
-            setText(selectedLabel);
+          if (value) {
+            setText(stableSelectedLabel);
           }
         }}
       />

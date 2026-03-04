@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { type SetStateAction, useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
+import { queryPnCatalog } from "@/lib/pn-catalog-client";
 import type { ContratoStatus } from "@/lib/types/contrato";
 
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
@@ -631,19 +632,10 @@ export default function NovoContratoEntradaAnimaisPage() {
           if (active) setLoadingParceiros(false);
           return;
         }
-        const params = new URLSearchParams();
-        params.set("limit", term.length >= 2 ? "5000" : "1500");
-        if (term) params.set("search", term);
-        const parceirosUrl = `/api/cadastros/parceiros?${params.toString()}`;
-        if (typeof window !== "undefined") {
-          console.info("[DEBUG PN][Entrada] URL:", parceirosUrl);
-        }
-        const response = await fetch(parceirosUrl, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error("Falha ao carregar parceiros.");
-        const data = (await response.json()) as ParceiroOption[];
+        const data = (await queryPnCatalog(term, {
+          emptyLimit: 1500,
+          searchLimit: 5000,
+        })) as ParceiroOption[];
         if (active) {
           if (!term) setParceirosWarmLoaded(true);
           setParceiros((prev) => {
@@ -792,12 +784,13 @@ export default function NovoContratoEntradaAnimaisPage() {
   }, [form.parceiroId, modalType, parceiros]);
 
   useEffect(() => {
-    if (modalType !== "item") return;
+    if (modalType !== "item" && modalType !== "frete") return;
     const term = itemSearch.trim();
+    const selectedCatalogId = modalType === "frete" ? (draft.equipamentoId ?? "") : itemDraft.itemId;
     if (!term) {
       setItemCatalog((prev) => {
-        const selectedFromPrev = findCatalogOptionByValue(prev.itens, itemDraft.itemId);
-        const selectedFromBase = findCatalogOptionByValue(baseItemOptions, itemDraft.itemId);
+        const selectedFromPrev = findCatalogOptionByValue(prev.itens, selectedCatalogId);
+        const selectedFromBase = findCatalogOptionByValue(baseItemOptions, selectedCatalogId);
         const selected = selectedFromPrev ?? selectedFromBase;
         return {
           ...prev,
@@ -825,8 +818,8 @@ export default function NovoContratoEntradaAnimaisPage() {
         if (!active) return;
         const itensEncontrados = normalizeCatalogOptions(data.itens);
         setItemCatalog((prev) => {
-          const selectedFromPrev = findCatalogOptionByValue(prev.itens, itemDraft.itemId);
-          const selectedFromBase = findCatalogOptionByValue(baseItemOptions, itemDraft.itemId);
+          const selectedFromPrev = findCatalogOptionByValue(prev.itens, selectedCatalogId);
+          const selectedFromBase = findCatalogOptionByValue(baseItemOptions, selectedCatalogId);
           const selected = selectedFromPrev ?? selectedFromBase;
           return {
             ...prev,
@@ -847,7 +840,7 @@ export default function NovoContratoEntradaAnimaisPage() {
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [baseItemOptions, itemDraft.itemId, itemSearch, modalType]);
+  }, [baseItemOptions, draft.equipamentoId, itemDraft.itemId, itemSearch, modalType]);
 
   async function ensureSapEmpresaCache(empresa: EmpresaOption): Promise<EmpresaOption> {
     const response = await fetch("/api/cadastros/empresas", {
@@ -1366,6 +1359,22 @@ export default function NovoContratoEntradaAnimaisPage() {
     setItemSelecionados(itens.map((_, index) => index));
   }
 
+  function handleRemoverItem(index: number) {
+    setItens((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+    setItemSelecionados((prev) =>
+      prev
+        .filter((selectedIndex) => selectedIndex !== index)
+        .map((selectedIndex) => (selectedIndex > index ? selectedIndex - 1 : selectedIndex)),
+    );
+  }
+
+  function handleRemoverItensSelecionados() {
+    if (itemSelecionados.length === 0) return;
+    const selectedSet = new Set(itemSelecionados);
+    setItens((prev) => prev.filter((_, index) => !selectedSet.has(index)));
+    setItemSelecionados([]);
+  }
+
   async function applyClausulasDoModelo(clausulaId: string, options?: { replace?: boolean }) {
     const selected = clausulasCatalogo.find((item) => item.id === clausulaId);
     if (!selected) {
@@ -1873,6 +1882,8 @@ export default function NovoContratoEntradaAnimaisPage() {
                 rows={itens}
                 selecionados={itemSelecionados}
                 onAdd={() => openModal("item")}
+                onRemove={handleRemoverItem}
+                onRemoveSelecionados={handleRemoverItensSelecionados}
                 onToggle={toggleItemSelecionado}
                 onToggleTodos={toggleTodosItens}
               />
@@ -2342,6 +2353,8 @@ export default function NovoContratoEntradaAnimaisPage() {
                   options={itemCatalog.itens}
                   value={draft.equipamentoId ?? ""}
                   listId="frete-equipamento-id"
+                  loading={loadingItensSap}
+                  onSearchTextChange={setItemSearch}
                   onValueChange={(value) => setDraft((prev) => ({ ...prev, equipamentoId: value }))}
                 />
               </div>
@@ -2660,12 +2673,16 @@ function ItensTab({
   rows,
   selecionados,
   onAdd,
+  onRemove,
+  onRemoveSelecionados,
   onToggle,
   onToggleTodos,
 }: {
   rows: ItemRow[];
   selecionados: number[];
   onAdd: () => void;
+  onRemove: (index: number) => void;
+  onRemoveSelecionados: () => void;
   onToggle: (index: number) => void;
   onToggleTodos: (checked: boolean) => void;
 }) {
@@ -2676,6 +2693,9 @@ function ItensTab({
       <p className="itens-title">Itens</p>
       <div className="legacy-actions mt-2">
         <button type="button" className="legacy-btn itens-add-btn" onClick={onAdd}>Adicionar</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={onRemoveSelecionados} disabled={selecionados.length === 0}>
+          Remover selecionados
+        </button>
       </div>
       <div className="itens-table-wrap mt-2">
         <table className="itens-table custos-table">
@@ -2693,6 +2713,7 @@ function ItensTab({
             <col style={{ minWidth: "145px" }} />
             <col style={{ minWidth: "130px" }} />
             <col style={{ minWidth: "90px" }} />
+            <col style={{ minWidth: "120px" }} />
           </colgroup>
           <thead>
             <tr>
@@ -2709,12 +2730,13 @@ function ItensTab({
               <th>Centro de Custo</th>
               <th>Utilização</th>
               <th>Moeda</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={13} className="itens-empty">&nbsp;</td>
+                <td colSpan={14} className="itens-empty">&nbsp;</td>
               </tr>
             )}
             {rows.map((row, index) => (
@@ -2732,6 +2754,9 @@ function ItensTab({
                 <td className="left">{row.centroCusto || "-"}</td>
                 <td className="left">{row.utilizacao || "-"}</td>
                 <td>{row.moeda || "-"}</td>
+                <td>
+                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -3179,7 +3204,11 @@ function formatTabHeaderLabel(header: string): string {
 }
 
 function Placeholder({ text }: { text: string }) {
-  return <section className="mt-2 rounded-md border border-[#cdd1df] bg-white p-4"><p className="text-sm text-[#51597a]">{text}</p></section>;
+  return (
+    <section className="placeholder-panel mt-2 p-4">
+      <p className="placeholder-panel-text text-sm">{text}</p>
+    </section>
+  );
 }
 
 function LegacyModal({

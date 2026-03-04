@@ -22,6 +22,36 @@ export type PesagemCalendarioRow = {
   valor: number;
 };
 
+export type PesagemGtaRow = {
+  id?: number;
+  gta: string;
+  quantidadeMachos: number;
+  quantidadeFemeas: number;
+  quantidadeTotal: number;
+};
+
+export type PesagemFechamento = {
+  tabelaFrete: string | null;
+  calculoFrete: string | null;
+  unidadeMedidaFrete: string | null;
+  valorUnitarioFrete: number;
+  valorCombustivel: number;
+  valorPedagio: number;
+  outrasDespesas: number;
+  litragem: number;
+  valorCombLitro: number;
+  valorDiaria: number;
+  valorComissao: number;
+  valorFrete: number;
+  pesagemOrigem: string | null;
+  dataVencimento: string | null;
+  qtdAnimais: number;
+  qtdAnimaisOrigem: number;
+  mapaPesagem: string | null;
+  cte: string | null;
+  nfExterna: string | null;
+};
+
 export type PesagemEntradaAnimaisListItem = {
   id: number;
   status: PesagemStatus;
@@ -84,6 +114,8 @@ export type PesagemEntradaAnimaisRecord = {
   motivosAtraso: PesagemMotivoRow[];
   motivosEspera: PesagemMotivoRow[];
   calendario: PesagemCalendarioRow[];
+  gtaRows: PesagemGtaRow[];
+  fechamento: PesagemFechamento;
 };
 
 export type PesagemEntradaAnimaisCreateInput = {
@@ -126,6 +158,8 @@ export type PesagemEntradaAnimaisCreateInput = {
   motivosAtraso?: PesagemMotivoRow[];
   motivosEspera?: PesagemMotivoRow[];
   calendario?: PesagemCalendarioRow[];
+  gtaRows?: PesagemGtaRow[];
+  fechamento?: Partial<PesagemFechamento> | null;
 };
 
 export type PesagemEntradaAnimaisUpdateInput = Partial<PesagemEntradaAnimaisCreateInput>;

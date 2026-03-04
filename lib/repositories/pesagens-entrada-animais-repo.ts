@@ -7,6 +7,8 @@ import type {
   PesagemEntradaAnimaisListFilters,
   PesagemEntradaAnimaisOptionsPayload,
   PesagemEntradaAnimaisRecord,
+  PesagemFechamento,
+  PesagemGtaRow,
   PesagemEntradaAnimaisUpdateInput,
   PesagemMotivoRow,
   PesagemStatus,
@@ -18,6 +20,8 @@ const DOC_TABLE = "agro.pesagem_veiculo_documento_fiscal";
 const ATRASO_TABLE = "agro.pesagem_veiculo_motivo_atraso";
 const ESPERA_TABLE = "agro.pesagem_veiculo_motivo_espera";
 const CALENDARIO_TABLE = "agro.pesagem_veiculo_calendario";
+const GTA_TABLE = "agro.pesagem_veiculo_gta";
+const FECHAMENTO_TABLE = "agro.pesagem_veiculo_fechamento";
 const tableExistsCache = new Map<string, boolean>();
 let pesagemSchemaEnsured = false;
 
@@ -130,7 +134,7 @@ export async function getPesagemEntradaAnimaisById(id: number): Promise<PesagemE
   const pool = getPgPool();
   await ensurePesagemSchema(pool);
 
-  const [baseResult, docsResult, atrasoResult, esperaResult, calendarioResult] = await Promise.all([
+  const [baseResult, docsResult, atrasoResult, esperaResult, calendarioResult, gtaResult, fechamentoResult] = await Promise.all([
     pool.query(
       `
       SELECT *
@@ -144,6 +148,8 @@ export async function getPesagemEntradaAnimaisById(id: number): Promise<PesagemE
     pool.query(`SELECT id, motivo, coalesce(tempo_minutos, 0) AS "tempoMinutos" FROM ${ATRASO_TABLE} WHERE pesagem_id = $1 ORDER BY id ASC`, [id]),
     pool.query(`SELECT id, motivo, coalesce(tempo_minutos, 0) AS "tempoMinutos" FROM ${ESPERA_TABLE} WHERE pesagem_id = $1 ORDER BY id ASC`, [id]),
     pool.query(`SELECT id, dt AS data, dia, coalesce(feriado, false) AS feriado, coalesce(pago, false) AS pago, coalesce(vl, 0) AS valor FROM ${CALENDARIO_TABLE} WHERE pesagem_id = $1 ORDER BY dt ASC, id ASC`, [id]),
+    pool.query(`SELECT id, gta, coalesce(qtd_machos, 0) AS "quantidadeMachos", coalesce(qtd_femeas, 0) AS "quantidadeFemeas", coalesce(qtd_total, 0) AS "quantidadeTotal" FROM ${GTA_TABLE} WHERE pesagem_id = $1 ORDER BY id ASC`, [id]),
+    pool.query(`SELECT * FROM ${FECHAMENTO_TABLE} WHERE pesagem_id = $1 LIMIT 1`, [id]),
   ]);
 
   if ((baseResult.rowCount ?? 0) === 0) return null;
@@ -199,6 +205,14 @@ export async function getPesagemEntradaAnimaisById(id: number): Promise<PesagemE
       pago: toBoolean(item.pago),
       valor: toDecimal(item.valor),
     })),
+    gtaRows: gtaResult.rows.map((item) => ({
+      id: toNumber(item.id),
+      gta: toText(item.gta),
+      quantidadeMachos: toInteger(item.quantidadeMachos),
+      quantidadeFemeas: toInteger(item.quantidadeFemeas),
+      quantidadeTotal: toInteger(item.quantidadeTotal),
+    })),
+    fechamento: mapFechamentoRow(fechamentoResult.rows[0] as Record<string, unknown> | undefined),
   };
 }
 
@@ -266,6 +280,8 @@ export async function createPesagemEntradaAnimais(input: PesagemEntradaAnimaisCr
     await replaceMotivos(client, ATRASO_TABLE, id, input.motivosAtraso ?? []);
     await replaceMotivos(client, ESPERA_TABLE, id, input.motivosEspera ?? []);
     await replaceCalendario(client, id, input.calendario ?? []);
+    await replaceGtaRows(client, id, input.gtaRows ?? []);
+    await upsertFechamento(client, id, input.fechamento ?? null);
 
     await client.query("COMMIT");
     return await getPesagemEntradaAnimaisById(id);
@@ -339,6 +355,8 @@ export async function updatePesagemEntradaAnimais(id: number, input: PesagemEntr
     if (input.motivosAtraso !== undefined) await replaceMotivos(client, ATRASO_TABLE, id, input.motivosAtraso);
     if (input.motivosEspera !== undefined) await replaceMotivos(client, ESPERA_TABLE, id, input.motivosEspera);
     if (input.calendario !== undefined) await replaceCalendario(client, id, input.calendario);
+    if (input.gtaRows !== undefined) await replaceGtaRows(client, id, input.gtaRows);
+    if (input.fechamento !== undefined) await upsertFechamento(client, id, input.fechamento ?? null);
 
     await client.query("COMMIT");
     return await getPesagemEntradaAnimaisById(id);
@@ -410,58 +428,260 @@ async function replaceCalendario(client: PoolClient, pesagemId: number, rows: Pe
   }
 }
 
+async function replaceGtaRows(client: PoolClient, pesagemId: number, rows: PesagemGtaRow[]) {
+  await client.query(`DELETE FROM ${GTA_TABLE} WHERE pesagem_id = $1`, [pesagemId]);
+  for (const row of rows) {
+    const gta = normalizeText(row.gta);
+    const quantidadeMachos = Math.max(0, Math.trunc(row.quantidadeMachos ?? 0));
+    const quantidadeFemeas = Math.max(0, Math.trunc(row.quantidadeFemeas ?? 0));
+    const quantidadeTotalRaw = Math.max(0, Math.trunc(row.quantidadeTotal ?? 0));
+    const quantidadeTotal = quantidadeTotalRaw > 0 ? quantidadeTotalRaw : quantidadeMachos + quantidadeFemeas;
+    if (!gta && quantidadeMachos === 0 && quantidadeFemeas === 0 && quantidadeTotal === 0) continue;
+    await client.query(
+      `INSERT INTO ${GTA_TABLE} (pesagem_id, gta, qtd_machos, qtd_femeas, qtd_total, created_on, updated_on) VALUES ($1,$2,$3,$4,$5,now(),now())`,
+      [pesagemId, gta, quantidadeMachos, quantidadeFemeas, quantidadeTotal],
+    );
+  }
+}
+
+async function upsertFechamento(client: PoolClient, pesagemId: number, fechamento: Partial<PesagemFechamento> | null) {
+  if (fechamento === null) {
+    await client.query(`DELETE FROM ${FECHAMENTO_TABLE} WHERE pesagem_id = $1`, [pesagemId]);
+    return;
+  }
+
+  await client.query(
+    `
+    INSERT INTO ${FECHAMENTO_TABLE} (
+      pesagem_id,
+      tabela_frete,
+      calculo_frete,
+      unidade_medida_frete,
+      vl_unitario_frete,
+      vl_combustivel,
+      vl_pedagio,
+      outras_despesas,
+      litragem,
+      vl_comb_litro,
+      vl_diaria,
+      vl_comissao,
+      vl_frete,
+      pesagem_origem,
+      dt_vencimento,
+      qtd_animais,
+      qtd_animais_origem,
+      mapa_pesagem,
+      cte,
+      nf_externa,
+      created_on,
+      updated_on
+    )
+    VALUES (
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),now()
+    )
+    ON CONFLICT (pesagem_id) DO UPDATE SET
+      tabela_frete = EXCLUDED.tabela_frete,
+      calculo_frete = EXCLUDED.calculo_frete,
+      unidade_medida_frete = EXCLUDED.unidade_medida_frete,
+      vl_unitario_frete = EXCLUDED.vl_unitario_frete,
+      vl_combustivel = EXCLUDED.vl_combustivel,
+      vl_pedagio = EXCLUDED.vl_pedagio,
+      outras_despesas = EXCLUDED.outras_despesas,
+      litragem = EXCLUDED.litragem,
+      vl_comb_litro = EXCLUDED.vl_comb_litro,
+      vl_diaria = EXCLUDED.vl_diaria,
+      vl_comissao = EXCLUDED.vl_comissao,
+      vl_frete = EXCLUDED.vl_frete,
+      pesagem_origem = EXCLUDED.pesagem_origem,
+      dt_vencimento = EXCLUDED.dt_vencimento,
+      qtd_animais = EXCLUDED.qtd_animais,
+      qtd_animais_origem = EXCLUDED.qtd_animais_origem,
+      mapa_pesagem = EXCLUDED.mapa_pesagem,
+      cte = EXCLUDED.cte,
+      nf_externa = EXCLUDED.nf_externa,
+      updated_on = now()
+    `,
+    [
+      pesagemId,
+      normalizeText(fechamento.tabelaFrete),
+      normalizeText(fechamento.calculoFrete),
+      normalizeText(fechamento.unidadeMedidaFrete),
+      toDecimal(fechamento.valorUnitarioFrete),
+      toDecimal(fechamento.valorCombustivel),
+      toDecimal(fechamento.valorPedagio),
+      toDecimal(fechamento.outrasDespesas),
+      toDecimal(fechamento.litragem),
+      toDecimal(fechamento.valorCombLitro),
+      toDecimal(fechamento.valorDiaria),
+      toDecimal(fechamento.valorComissao),
+      toDecimal(fechamento.valorFrete),
+      normalizeText(fechamento.pesagemOrigem),
+      normalizeDateInput(fechamento.dataVencimento),
+      toInteger(fechamento.qtdAnimais),
+      toInteger(fechamento.qtdAnimaisOrigem),
+      normalizeText(fechamento.mapaPesagem),
+      normalizeText(fechamento.cte),
+      normalizeText(fechamento.nfExterna),
+    ],
+  );
+}
+
 async function ensurePesagemSchema(pool: Pool) {
   if (pesagemSchemaEnsured) return;
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS agro`);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${PESAGEM_TABLE} (
-      id BIGSERIAL PRIMARY KEY,
-      created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_on TIMESTAMPTZ NOT NULL DEFAULT now(),
-      status VARCHAR(32) NOT NULL DEFAULT 'disponivel',
-      tipo VARCHAR(32) NOT NULL DEFAULT 'entrada_animais',
-      numero VARCHAR(30) NULL,
-      contrato_id BIGINT NULL,
-      contrato_referencia VARCHAR(255) NULL,
-      item_id BIGINT NULL,
-      item_descricao VARCHAR(255) NULL,
-      fazenda_id BIGINT NULL,
-      fazenda_nome VARCHAR(255) NULL,
-      tp_frete VARCHAR(32) NULL,
-      responsavel_frete VARCHAR(32) NULL,
-      transportador_id BIGINT NULL,
-      transportador_nome VARCHAR(255) NULL,
-      contratante_id BIGINT NULL,
-      contratante_nome VARCHAR(255) NULL,
-      motorista_id BIGINT NULL,
-      motorista_nome VARCHAR(255) NULL,
-      dt_chegada DATE NULL,
-      hr_chegada TIME NULL,
-      dt_saida DATE NULL,
-      hr_saida TIME NULL,
-      placa VARCHAR(10) NULL,
-      equipamento_id BIGINT NULL,
-      equipamento_nome VARCHAR(255) NULL,
-      viagem VARCHAR(255) NULL,
-      dt_inicio DATE NULL,
-      dt_fim DATE NULL,
-      km_inicial NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      km_final NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      km_total NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      observacao TEXT NULL,
-      peso_bruto NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      peso_tara NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      peso_liquido NUMERIC(29, 6) NOT NULL DEFAULT 0,
-      operacao VARCHAR(128) NULL
-    )
-  `);
-  await pool.query(`CREATE TABLE IF NOT EXISTS ${DOC_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, documento VARCHAR(128) NOT NULL, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS ${ATRASO_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, motivo VARCHAR(4000) NOT NULL, tempo_minutos INTEGER NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS ${ESPERA_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, motivo VARCHAR(4000) NOT NULL, tempo_minutos INTEGER NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS ${CALENDARIO_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, dt DATE NOT NULL, dia VARCHAR(32) NULL, feriado BOOLEAN NOT NULL DEFAULT false, pago BOOLEAN NOT NULL DEFAULT false, vl NUMERIC(28, 6) NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_tipo_status_id ON ${PESAGEM_TABLE}(tipo, status, id DESC)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_numero ON ${PESAGEM_TABLE}(numero)`);
-  pesagemSchemaEnsured = true;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Lock global por transacao para evitar corrida de DDL entre requisicoes/processos.
+    await client.query("SELECT pg_advisory_xact_lock($1, $2)", [48271, 1209]);
+
+    if (pesagemSchemaEnsured) {
+      await client.query("COMMIT");
+      return;
+    }
+
+    await client.query(`CREATE SCHEMA IF NOT EXISTS agro`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ${PESAGEM_TABLE} (
+        id BIGSERIAL PRIMARY KEY,
+        created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+        status VARCHAR(32) NOT NULL DEFAULT 'disponivel',
+        tipo VARCHAR(32) NOT NULL DEFAULT 'entrada_animais',
+        numero VARCHAR(30) NULL,
+        contrato_id BIGINT NULL,
+        contrato_referencia VARCHAR(255) NULL,
+        item_id BIGINT NULL,
+        item_descricao VARCHAR(255) NULL,
+        fazenda_id BIGINT NULL,
+        fazenda_nome VARCHAR(255) NULL,
+        tp_frete VARCHAR(32) NULL,
+        responsavel_frete VARCHAR(32) NULL,
+        transportador_id BIGINT NULL,
+        transportador_nome VARCHAR(255) NULL,
+        contratante_id BIGINT NULL,
+        contratante_nome VARCHAR(255) NULL,
+        motorista_id BIGINT NULL,
+        motorista_nome VARCHAR(255) NULL,
+        dt_chegada DATE NULL,
+        hr_chegada TIME NULL,
+        dt_saida DATE NULL,
+        hr_saida TIME NULL,
+        placa VARCHAR(10) NULL,
+        equipamento_id BIGINT NULL,
+        equipamento_nome VARCHAR(255) NULL,
+        viagem VARCHAR(255) NULL,
+        dt_inicio DATE NULL,
+        dt_fim DATE NULL,
+        km_inicial NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        km_final NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        km_total NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        observacao TEXT NULL,
+        peso_bruto NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        peso_tara NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        peso_liquido NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        operacao VARCHAR(128) NULL
+      )
+    `);
+    await client.query(`CREATE TABLE IF NOT EXISTS ${DOC_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, documento VARCHAR(128) NOT NULL, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await client.query(`CREATE TABLE IF NOT EXISTS ${ATRASO_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, motivo VARCHAR(4000) NOT NULL, tempo_minutos INTEGER NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await client.query(`CREATE TABLE IF NOT EXISTS ${ESPERA_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, motivo VARCHAR(4000) NOT NULL, tempo_minutos INTEGER NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await client.query(`CREATE TABLE IF NOT EXISTS ${CALENDARIO_TABLE} (id BIGSERIAL PRIMARY KEY, pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE, dt DATE NOT NULL, dia VARCHAR(32) NULL, feriado BOOLEAN NOT NULL DEFAULT false, pago BOOLEAN NOT NULL DEFAULT false, vl NUMERIC(28, 6) NOT NULL DEFAULT 0, created_on TIMESTAMPTZ NOT NULL DEFAULT now(), updated_on TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ${GTA_TABLE} (
+        id BIGSERIAL PRIMARY KEY,
+        pesagem_id BIGINT NOT NULL REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE,
+        gta VARCHAR(128) NULL,
+        qtd_machos INTEGER NOT NULL DEFAULT 0,
+        qtd_femeas INTEGER NOT NULL DEFAULT 0,
+        qtd_total INTEGER NOT NULL DEFAULT 0,
+        created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_on TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ${FECHAMENTO_TABLE} (
+        pesagem_id BIGINT PRIMARY KEY REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE,
+        tabela_frete VARCHAR(64) NULL,
+        calculo_frete VARCHAR(64) NULL,
+        unidade_medida_frete VARCHAR(64) NULL,
+        vl_unitario_frete NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_combustivel NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_pedagio NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        outras_despesas NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        litragem NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_comb_litro NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_diaria NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_comissao NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        vl_frete NUMERIC(29, 6) NOT NULL DEFAULT 0,
+        pesagem_origem VARCHAR(64) NULL,
+        dt_vencimento DATE NULL,
+        qtd_animais INTEGER NOT NULL DEFAULT 0,
+        qtd_animais_origem INTEGER NOT NULL DEFAULT 0,
+        mapa_pesagem VARCHAR(128) NULL,
+        cte VARCHAR(64) NULL,
+        nf_externa VARCHAR(64) NULL,
+        created_on TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_on TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_tipo_status_id ON ${PESAGEM_TABLE}(tipo, status, id DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_numero ON ${PESAGEM_TABLE}(numero)`);
+    await client.query("COMMIT");
+    pesagemSchemaEnsured = true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function mapFechamentoRow(row: Record<string, unknown> | undefined): PesagemFechamento {
+  if (!row) {
+    return {
+      tabelaFrete: null,
+      calculoFrete: null,
+      unidadeMedidaFrete: null,
+      valorUnitarioFrete: 0,
+      valorCombustivel: 0,
+      valorPedagio: 0,
+      outrasDespesas: 0,
+      litragem: 0,
+      valorCombLitro: 0,
+      valorDiaria: 0,
+      valorComissao: 0,
+      valorFrete: 0,
+      pesagemOrigem: null,
+      dataVencimento: null,
+      qtdAnimais: 0,
+      qtdAnimaisOrigem: 0,
+      mapaPesagem: null,
+      cte: null,
+      nfExterna: null,
+    };
+  }
+
+  return {
+    tabelaFrete: toNullableString(row.tabela_frete),
+    calculoFrete: toNullableString(row.calculo_frete),
+    unidadeMedidaFrete: toNullableString(row.unidade_medida_frete),
+    valorUnitarioFrete: toDecimal(row.vl_unitario_frete),
+    valorCombustivel: toDecimal(row.vl_combustivel),
+    valorPedagio: toDecimal(row.vl_pedagio),
+    outrasDespesas: toDecimal(row.outras_despesas),
+    litragem: toDecimal(row.litragem),
+    valorCombLitro: toDecimal(row.vl_comb_litro),
+    valorDiaria: toDecimal(row.vl_diaria),
+    valorComissao: toDecimal(row.vl_comissao),
+    valorFrete: toDecimal(row.vl_frete),
+    pesagemOrigem: toNullableString(row.pesagem_origem),
+    dataVencimento: toDateOnlyString(row.dt_vencimento),
+    qtdAnimais: toInteger(row.qtd_animais),
+    qtdAnimaisOrigem: toInteger(row.qtd_animais_origem),
+    mapaPesagem: toNullableString(row.mapa_pesagem),
+    cte: toNullableString(row.cte),
+    nfExterna: toNullableString(row.nf_externa),
+  };
 }
 
 async function hasTable(pool: Pool, relation: string): Promise<boolean> {
@@ -553,6 +773,11 @@ function toNumber(value: unknown): number {
 
 function toDecimal(value: unknown): number {
   const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toInteger(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 

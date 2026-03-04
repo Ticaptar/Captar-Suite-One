@@ -16,6 +16,13 @@ export async function GET(request: Request) {
   }
 
   if (!forceSimulado) {
+    if (!process.env.URL_BALANCA?.trim()) {
+      return NextResponse.json(
+        { error: "URL_BALANCA nao configurada para captura automatica de peso." },
+        { status: 503 },
+      );
+    }
+
     const pesoBalanca = await readPesoFromBalanca();
     if (pesoBalanca !== null) {
       return NextResponse.json({
@@ -24,6 +31,11 @@ export async function GET(request: Request) {
         source: "balanca",
       });
     }
+
+    return NextResponse.json(
+      { error: "Nao foi possivel ler o peso na balanca no momento." },
+      { status: 503 },
+    );
   }
 
   const min =
@@ -62,16 +74,16 @@ function round2(value: number): number {
 async function readPesoFromBalanca(): Promise<number | null> {
   const url = process.env.URL_BALANCA?.trim();
   if (!url) return null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    timer = setTimeout(() => controller.abort(), 4000);
     const response = await fetch(url, {
       method: "GET",
       cache: "no-store",
       signal: controller.signal,
     });
-    clearTimeout(timer);
     if (!response.ok) return null;
 
     const contentType = response.headers.get("content-type") ?? "";
@@ -88,6 +100,8 @@ async function readPesoFromBalanca(): Promise<number | null> {
     return parsePesoFromString(text);
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -124,8 +138,11 @@ function parsePesoFromString(value: string): number | null {
   if (!value) return null;
   const numericTokens = value.match(/-?\d+(?:[.,]\d+)?/g);
   if (!numericTokens || numericTokens.length === 0) return null;
-  const last = numericTokens[numericTokens.length - 1];
-  return parseNumber(last);
+  const parsedNumbers = numericTokens
+    .map((token) => parseNumber(token))
+    .filter((token): token is number => token !== null);
+  if (parsedNumbers.length === 0) return null;
+  return parsedNumbers[parsedNumbers.length - 1];
 }
 
 function toStringValue(value: unknown): string {
