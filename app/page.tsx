@@ -1,11 +1,11 @@
-import Link from "next/link";
+ï»¿import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
 import { ModuleHeader } from "@/components/module-header";
+import { moduleDefinitions } from "@/lib/modules";
 import { listContratosEntradaAnimais } from "@/lib/repositories/contratos-entrada-animais-repo";
 import { listContratosSaidaAnimais } from "@/lib/repositories/contratos-saida-animais-repo";
 import { listContratosSaidaInsumos } from "@/lib/repositories/contratos-saida-insumos-repo";
 import { listVisitas } from "@/lib/repositories/visitas-repo";
-import { moduleDefinitions } from "@/lib/modules";
 
 type DashboardData = {
   isLive: boolean;
@@ -24,20 +24,25 @@ type DashboardData = {
 const implementationStatus = [
   {
     title: "Contratos",
-    status: "Operação central",
-    detail: "Fluxos de entrada e saída com edição completa, filtros e emissão de PDF.",
+    status: "Core em operacao",
+    detail: "Fluxos de entrada e saida com filtros, edicao e emissao de PDF.",
+    tone: "status-ocean",
   },
   {
-    title: "Integrações",
-    status: "SAP B1 conectado",
-    detail: "Estrutura preparada para sincronização com cadastros e pedidos do Service Layer.",
+    title: "Integracoes",
+    status: "Conexao SAP pronta",
+    detail: "Estrutura pronta para sincronizar cadastros e pedidos do Service Layer.",
+    tone: "status-sunset",
   },
   {
-    title: "Governança",
-    status: "Visão executiva",
-    detail: "A home agora consolida indicadores dos módulos e pendências operacionais.",
+    title: "Governanca",
+    status: "Visao executiva",
+    detail: "Home com leitura instantanea de volume e pendencias por frente.",
+    tone: "status-emerald",
   },
-];
+] as const;
+
+const moduleTones = ["tone-cyan", "tone-orange", "tone-green"] as const;
 
 const emptyDashboard: DashboardData = {
   isLive: false,
@@ -149,7 +154,7 @@ export default async function HomePage() {
   const pendingLinks = totalLinks - activeLinks;
   const coverage = totalLinks > 0 ? Math.round((activeLinks / totalLinks) * 100) : 0;
 
-  const moduleCards = moduleDefinitions.map((module) => {
+  const moduleCards = moduleDefinitions.map((module, index) => {
     const activeModuleLinks = module.links.filter((link) => link.href !== "#");
     const activeCount = activeModuleLinks.length;
     const pendingCount = module.links.length - activeCount;
@@ -160,31 +165,101 @@ export default async function HomePage() {
       activeCount,
       pendingCount,
       progress,
+      tone: moduleTones[index % moduleTones.length],
       primaryLink: activeModuleLinks[0]?.href ?? null,
       quickLinks: activeModuleLinks.slice(0, 3),
     };
   });
 
+  const kpiCards = [
+    {
+      label: "Modulos configurados",
+      value: formatNumber(moduleDefinitions.length),
+      detail: "Base estrutural ativa",
+      chip: `${coverage}% cobertura`,
+      tone: "tone-cyan",
+    },
+    {
+      label: "Rotas operacionais",
+      value: formatNumber(activeLinks),
+      detail: "Atalhos publicados",
+      chip: `${formatNumber(totalLinks)} mapeadas`,
+      tone: "tone-orange",
+    },
+    {
+      label: "Pendencias de rota",
+      value: formatNumber(pendingLinks),
+      detail: "Itens em roadmap",
+      chip: "Backlog tecnico",
+      tone: "tone-pink",
+    },
+    {
+      label: "Contratos pendentes",
+      value: formatNumber(dashboard.contratosPendentes),
+      detail: "Aguardando aprovacao",
+      chip: `${formatNumber(dashboard.contratosTotal)} no total`,
+      tone: "tone-green",
+    },
+  ] as const;
+
+  const operationCards = [
+    {
+      title: "Saida de Insumos",
+      total: dashboard.contratosPorModulo.saidaInsumos.total,
+      pending: dashboard.contratosPorModulo.saidaInsumos.pendentes,
+      href: "/contratos/saida-insumos",
+      tone: "tone-cyan",
+    },
+    {
+      title: "Entrada de Insumos",
+      total: dashboard.contratosPorModulo.entradaInsumos.total,
+      pending: dashboard.contratosPorModulo.entradaInsumos.pendentes,
+      href: "/contratos/entrada-insumos",
+      tone: "tone-orange",
+    },
+    {
+      title: "Entrada de Animais",
+      total: dashboard.contratosPorModulo.entradaAnimais.total,
+      pending: dashboard.contratosPorModulo.entradaAnimais.pendentes,
+      href: "/contratos/entrada-animais",
+      tone: "tone-green",
+    },
+    {
+      title: "Saida de Animais",
+      total: dashboard.contratosPorModulo.saidaAnimais.total,
+      pending: dashboard.contratosPorModulo.saidaAnimais.pendentes,
+      href: "/contratos/saida-animais",
+      tone: "tone-pink",
+    },
+  ] as const;
+
   return (
-    <div className="page-shell min-h-screen px-2 py-2 md:px-3">
+    <div className="page-shell home-dashboard min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
         <section className="card hero-card p-4 md:p-5">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div className="space-y-3">
               <BrandLogo compact />
               <div className="space-y-1">
-                <p className="hero-kicker">CAPTAR SUÍTE</p>
-                <h1 className="hero-title">Painel Executivo Inicial</h1>
+                <p className="hero-kicker">CAPTAR SUITE</p>
+                <h1 className="hero-title">Dashboard de Controle Executivo</h1>
                 <p className="hero-subtitle">
-                  Visão consolidada de módulos, contratos e operações ativas para acelerar as decisões do dia.
+                  Panorama moderno da operacao com foco em contratos, modulos e prioridades do dia.
                 </p>
               </div>
+              <div className="hero-chip-row">
+                <span className="hero-chip">Atualizado: {formatDateTime(dashboard.generatedAt)}</span>
+                <span className={`hero-chip ${dashboard.isLive ? "ok" : "warn"}`}>
+                  {dashboard.isLive ? "Dados em tempo real" : "Modo fallback"}
+                </span>
+              </div>
             </div>
-            <div className="hero-meta">
-              <p className="hero-meta-label">Ambiente</p>
-              <p className="hero-meta-value">Captar Suíte</p>
-              <p className="hero-meta-label mt-2">Última leitura</p>
-              <p className="hero-meta-value">{formatDateTime(dashboard.generatedAt)}</p>
+
+            <div className="hero-meta hero-meta-strong">
+              <p className="hero-meta-label">Volume total</p>
+              <p className="hero-meta-value">{formatNumber(dashboard.contratosTotal)} contratos</p>
+              <p className="hero-meta-label mt-2">Visitas no funil</p>
+              <p className="hero-meta-value">{formatNumber(dashboard.visitasTotal)}</p>
             </div>
           </div>
         </section>
@@ -192,104 +267,67 @@ export default async function HomePage() {
         <ModuleHeader />
 
         <section className="dashboard-kpi-grid">
-          <article className="card kpi-card p-3">
-            <p className="kpi-label">Módulos configurados</p>
-            <p className="kpi-value">{formatNumber(moduleDefinitions.length)}</p>
-            <p className="kpi-detail">Estrutura principal ativa</p>
-          </article>
-          <article className="card kpi-card p-3">
-            <p className="kpi-label">Rotas operacionais</p>
-            <p className="kpi-value">{formatNumber(activeLinks)}</p>
-            <p className="kpi-detail">Atalhos já publicados</p>
-          </article>
-          <article className="card kpi-card p-3">
-            <p className="kpi-label">Pendências de rota</p>
-            <p className="kpi-value">{formatNumber(pendingLinks)}</p>
-            <p className="kpi-detail">Links marcados para evolução</p>
-          </article>
-          <article className="card kpi-card p-3">
-            <p className="kpi-label">Cobertura dos módulos</p>
-            <p className="kpi-value">{coverage}%</p>
-            <p className="kpi-detail">Relação entre links ativos e total</p>
-          </article>
+          {kpiCards.map((item) => (
+            <article key={item.label} className={`card kpi-card ${item.tone} p-4`}>
+              <p className="kpi-label">{item.label}</p>
+              <p className="kpi-value">{item.value}</p>
+              <div className="kpi-footer">
+                <p className="kpi-detail">{item.detail}</p>
+                <span className="kpi-chip">{item.chip}</span>
+              </div>
+            </article>
+          ))}
         </section>
 
         <section className="card dashboard-panel p-4 md:p-5">
           <div className="dashboard-head">
             <div>
-              <h2 className="section-title">Dashboard Operacional</h2>
-              <p className="dashboard-subtitle">Resumo de visitas e contratos por frente de trabalho.</p>
+              <h2 className="section-title">Painel Operacional</h2>
+              <p className="dashboard-subtitle">Leitura rapida dos contratos por frente e gargalos de aprovacao.</p>
             </div>
-            <span className={`dashboard-live ${dashboard.isLive ? "ok" : "warn"}`}>
-              {dashboard.isLive ? "Dados reais" : "Modo fallback"}
-            </span>
+            <Link href="/visitas" className="btn-primary text-sm">
+              Abrir pipeline de visitas
+            </Link>
           </div>
 
           <div className="ops-summary-grid">
-            <article className="ops-summary-card">
+            <article className="ops-summary-card tone-cyan">
               <p className="ops-summary-label">Visitas cadastradas</p>
               <p className="ops-summary-value">{formatNumber(dashboard.visitasTotal)}</p>
-              <Link href="/visitas" className="ops-summary-link">
-                Abrir visitas
-              </Link>
+              <p className="ops-summary-detail">Leads e oportunidades no funil comercial</p>
             </article>
-            <article className="ops-summary-card">
-              <p className="ops-summary-label">Contratos totais</p>
+            <article className="ops-summary-card tone-orange">
+              <p className="ops-summary-label">Contratos ativos no radar</p>
               <p className="ops-summary-value">{formatNumber(dashboard.contratosTotal)}</p>
-              <p className="ops-summary-detail">Somando todos os tipos de contrato</p>
+              <p className="ops-summary-detail">Somatorio de todos os tipos de contrato</p>
             </article>
-            <article className="ops-summary-card">
-              <p className="ops-summary-label">Aguardando aprovação</p>
+            <article className="ops-summary-card tone-pink">
+              <p className="ops-summary-label">Aguardando aprovacao</p>
               <p className="ops-summary-value">{formatNumber(dashboard.contratosPendentes)}</p>
-              <p className="ops-summary-detail">Pendências críticas para follow-up</p>
+              <p className="ops-summary-detail">Prioridade para follow-up com equipe</p>
             </article>
           </div>
 
           <div className="ops-grid mt-3">
-            <article className="ops-card">
-              <p className="ops-title">Saída de Insumos</p>
-              <p className="ops-total">{formatNumber(dashboard.contratosPorModulo.saidaInsumos.total)}</p>
-              <p className="ops-meta">Pendentes: {formatNumber(dashboard.contratosPorModulo.saidaInsumos.pendentes)}</p>
-              <Link href="/contratos/saida-insumos" className="ops-link">
-                Abrir módulo
-              </Link>
-            </article>
-            <article className="ops-card">
-              <p className="ops-title">Entrada de Insumos</p>
-              <p className="ops-total">{formatNumber(dashboard.contratosPorModulo.entradaInsumos.total)}</p>
-              <p className="ops-meta">Pendentes: {formatNumber(dashboard.contratosPorModulo.entradaInsumos.pendentes)}</p>
-              <Link href="/contratos/entrada-insumos" className="ops-link">
-                Abrir módulo
-              </Link>
-            </article>
-            <article className="ops-card">
-              <p className="ops-title">Entrada de Animais</p>
-              <p className="ops-total">{formatNumber(dashboard.contratosPorModulo.entradaAnimais.total)}</p>
-              <p className="ops-meta">Pendentes: {formatNumber(dashboard.contratosPorModulo.entradaAnimais.pendentes)}</p>
-              <Link href="/contratos/entrada-animais" className="ops-link">
-                Abrir módulo
-              </Link>
-            </article>
-            <article className="ops-card">
-              <p className="ops-title">Saída de Animais</p>
-              <p className="ops-total">{formatNumber(dashboard.contratosPorModulo.saidaAnimais.total)}</p>
-              <p className="ops-meta">Pendentes: {formatNumber(dashboard.contratosPorModulo.saidaAnimais.pendentes)}</p>
-              <Link href="/contratos/saida-animais" className="ops-link">
-                Abrir módulo
-              </Link>
-            </article>
+            {operationCards.map((item) => (
+              <article key={item.title} className={`ops-card ${item.tone}`}>
+                <div className="ops-card-head">
+                  <p className="ops-title">{item.title}</p>
+                  <span className="ops-pill">{formatNumber(item.pending)} pendentes</span>
+                </div>
+                <p className="ops-total">{formatNumber(item.total)}</p>
+                <p className="ops-meta">Total de contratos monitorados nessa frente</p>
+                <Link href={item.href} className="ops-link">
+                  Abrir modulo
+                </Link>
+              </article>
+            ))}
           </div>
-
-          {!dashboard.isLive && (
-            <p className="dashboard-warning mt-3">
-              Não foi possível carregar os números em tempo real. Verifique `DATABASE_URL` e as tabelas do schema `contrato`.
-            </p>
-          )}
         </section>
 
         <section className="grid gap-3 md:grid-cols-3">
           {implementationStatus.map((item) => (
-            <article key={item.title} className="card compact-card p-4">
+            <article key={item.title} className={`card compact-card modern-status-card ${item.tone} p-4`}>
               <p className="status-label">{item.title}</p>
               <p className="status-title">{item.status}</p>
               <p className="status-detail">{item.detail}</p>
@@ -299,13 +337,13 @@ export default async function HomePage() {
 
         <section className="card p-4 md:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="section-title">Resumão dos Módulos</h2>
-            <span className="module-summary-note">Progresso visual por quantidade de links ativos</span>
+            <h2 className="section-title">Resumo dos Modulos</h2>
+            <span className="module-summary-note">Progresso visual baseado em links ativos por modulo</span>
           </div>
 
           <div className="module-summary-grid mt-3">
             {moduleCards.map((module) => (
-              <article key={module.id} className="module-summary-card">
+              <article key={module.id} className={`module-summary-card ${module.tone}`}>
                 <div className="module-summary-top">
                   <p className="module-summary-title">{module.label}</p>
                   <span className="module-summary-badge">{module.progress}%</span>
@@ -314,7 +352,7 @@ export default async function HomePage() {
                   <span style={{ width: `${module.progress}%` }} />
                 </div>
                 <p className="module-summary-meta">
-                  {module.activeCount} ativos • {module.pendingCount} pendentes
+                  {module.activeCount} ativos - {module.pendingCount} pendentes
                 </p>
                 <div className="module-summary-links">
                   {module.quickLinks.length === 0 && <span className="module-empty-link">Sem rotas publicadas</span>}
@@ -326,7 +364,7 @@ export default async function HomePage() {
                 </div>
                 {module.primaryLink ? (
                   <Link href={module.primaryLink} className="btn-secondary text-sm">
-                    Ir para módulo
+                    Ir para modulo
                   </Link>
                 ) : (
                   <span className="btn-secondary text-sm module-disabled-btn">Em planejamento</span>
@@ -338,9 +376,9 @@ export default async function HomePage() {
 
         <section className="card p-4 md:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="section-title">Acesso Rápido: Negociações e Contratos</h2>
+            <h2 className="section-title">Acesso Rapido: Negociacoes e Contratos</h2>
             <Link href="/contratos/saida-insumos" className="btn-secondary text-sm">
-              Abrir módulo
+              Abrir modulo
             </Link>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -352,10 +390,10 @@ export default async function HomePage() {
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link href="/contratos/saida-insumos/novo" className="btn-primary">
-              Novo Contrato
+              Novo contrato
             </Link>
             <Link href="/visitas/nova" className="btn-secondary">
-              Nova Visita
+              Nova visita
             </Link>
           </div>
         </section>

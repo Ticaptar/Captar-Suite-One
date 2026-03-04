@@ -1,11 +1,16 @@
 ﻿import type { Metadata } from "next";
-import { DM_Sans, Playfair_Display } from "next/font/google";
+import { Manrope, Playfair_Display, Sora } from "next/font/google";
 import { PwaRegister } from "@/components/pwa-register";
 import { SplashScreen } from "@/components/splash-screen";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  variable: "--font-dm-sans",
+const manrope = Manrope({
+  variable: "--font-manrope",
+  subsets: ["latin"],
+});
+
+const sora = Sora({
+  variable: "--font-sora",
   subsets: ["latin"],
 });
 
@@ -36,7 +41,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${dmSans.variable} ${playfair.variable} antialiased`}>
+      <body className={`${manrope.variable} ${sora.variable} ${playfair.variable} antialiased`}>
         <PwaRegister />
         <SplashScreen />
         {children}
