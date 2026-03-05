@@ -1,4 +1,4 @@
-﻿export type ModuleLink = {
+export type ModuleLink = {
   label: string;
   href: string;
 };
@@ -33,8 +33,25 @@ export const moduleDefinitions: ModuleDefinition[] = [
     id: "pesagens",
     label: "Pesagens",
     links: [
+      { label: "Pesagem de Entrada de Insumos", href: "/pesagens/entrada-insumos" },
+      { label: "Pesagem de Saida de Insumos", href: "/pesagens/saida-insumos" },
       { label: "Pesagem de Entrada de Animais", href: "/pesagens/entrada-animais" },
+      { label: "Pesagem de Saida de Animais", href: "/pesagens/saida-animais" },
     ],
+  },
+  {
+    id: "gta",
+    label: "GTA",
+    links: [
+      { label: "GTA de Entrada", href: "/gta/entrada" },
+      { label: "GTA de Saida", href: "/gta/saida" },
+      { label: "GTA Temporaria", href: "/gta/temporaria" },
+    ],
+  },
+  {
+    id: "frota",
+    label: "Frota",
+    links: [{ label: "Viagem/Saida", href: "/frota/viagem-saida" }],
   },
   {
     id: "configuracoes",
@@ -55,3 +72,4 @@ export const moduleDefinitions: ModuleDefinition[] = [
     ],
   },
 ];
+

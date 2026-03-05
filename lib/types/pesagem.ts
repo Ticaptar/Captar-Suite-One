@@ -1,6 +1,6 @@
 export type PesagemStatus = "disponivel" | "peso_finalizado" | "fechado" | "cancelado";
 
-export type PesagemTipo = "entrada_animais";
+export type PesagemTipo = "entrada_animais" | "saida_animais" | "entrada_insumos" | "saida_insumos";
 
 export type PesagemDocumentoFiscal = {
   id?: number;
@@ -30,9 +30,26 @@ export type PesagemGtaRow = {
   quantidadeTotal: number;
 };
 
+export type PesagemClassificacaoRow = {
+  id?: number;
+  tipoAnalise: string;
+  valorEncontrado: number;
+  pesoDesconto: number;
+  unidade: string | null;
+};
+
 export type PesagemFechamento = {
   tabelaFrete: string | null;
   calculoFrete: string | null;
+  periodoProducaoAgricola: string | null;
+  talhao?: string | null;
+  pesoSecador?: number;
+  pesoDescontoClassificado?: number;
+  pesoLiquidoDesconto?: number;
+  pesoNotaFiscal?: number;
+  pesoOrigem?: number;
+  numeroLaudo?: string | null;
+  armazenagemSilo?: string | null;
   unidadeMedidaFrete: string | null;
   valorUnitarioFrete: number;
   valorCombustivel: number;
@@ -115,6 +132,7 @@ export type PesagemEntradaAnimaisRecord = {
   motivosEspera: PesagemMotivoRow[];
   calendario: PesagemCalendarioRow[];
   gtaRows: PesagemGtaRow[];
+  classificacaoRows?: PesagemClassificacaoRow[];
   fechamento: PesagemFechamento;
 };
 
@@ -159,6 +177,7 @@ export type PesagemEntradaAnimaisCreateInput = {
   motivosEspera?: PesagemMotivoRow[];
   calendario?: PesagemCalendarioRow[];
   gtaRows?: PesagemGtaRow[];
+  classificacaoRows?: PesagemClassificacaoRow[];
   fechamento?: Partial<PesagemFechamento> | null;
 };
 
@@ -180,3 +199,24 @@ export type PesagemEntradaAnimaisOptionsPayload = {
   equipamentos: Array<{ id: number; codigo: string | null; descricao: string }>;
   viagens: Array<{ id: number; numero: string | null; descricao: string | null }>;
 };
+
+export type PesagemSaidaAnimaisListItem = PesagemEntradaAnimaisListItem;
+export type PesagemSaidaAnimaisRecord = PesagemEntradaAnimaisRecord;
+export type PesagemSaidaAnimaisCreateInput = PesagemEntradaAnimaisCreateInput;
+export type PesagemSaidaAnimaisUpdateInput = PesagemEntradaAnimaisUpdateInput;
+export type PesagemSaidaAnimaisListFilters = PesagemEntradaAnimaisListFilters;
+export type PesagemSaidaAnimaisOptionsPayload = PesagemEntradaAnimaisOptionsPayload;
+
+export type PesagemEntradaInsumosListItem = PesagemEntradaAnimaisListItem;
+export type PesagemEntradaInsumosRecord = PesagemEntradaAnimaisRecord;
+export type PesagemEntradaInsumosCreateInput = PesagemEntradaAnimaisCreateInput;
+export type PesagemEntradaInsumosUpdateInput = PesagemEntradaAnimaisUpdateInput;
+export type PesagemEntradaInsumosListFilters = PesagemEntradaAnimaisListFilters;
+export type PesagemEntradaInsumosOptionsPayload = PesagemEntradaAnimaisOptionsPayload;
+
+export type PesagemSaidaInsumosListItem = PesagemEntradaAnimaisListItem;
+export type PesagemSaidaInsumosRecord = PesagemEntradaAnimaisRecord;
+export type PesagemSaidaInsumosCreateInput = PesagemEntradaAnimaisCreateInput;
+export type PesagemSaidaInsumosUpdateInput = PesagemEntradaAnimaisUpdateInput;
+export type PesagemSaidaInsumosListFilters = PesagemEntradaAnimaisListFilters;
+export type PesagemSaidaInsumosOptionsPayload = PesagemEntradaAnimaisOptionsPayload;

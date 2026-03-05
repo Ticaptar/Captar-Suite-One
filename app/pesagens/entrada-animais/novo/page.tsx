@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -17,9 +17,36 @@ type DocumentoFiscal = { documento: string };
 type MotivoRow = { motivo: string; tempoMinutos: string };
 type CalendarioRow = { data: string; dia: string; feriado: boolean; pago: boolean; valor: string };
 type GtaRow = { gta: string; quantidadeMachos: string; quantidadeFemeas: string; quantidadeTotal: string };
+type PesagemListItem = {
+  id: number;
+  numeroTicket: string | null;
+  placa: string | null;
+  motorista: string | null;
+  dataChegada: string | null;
+  operação: string | null;
+};
+type PesagemListResponse = {
+  items?: PesagemListItem[];
+};
+type ContratoMapaResponse = {
+  contrato?: Record<string, unknown>;
+  mapas?: Record<string, unknown>[];
+};
+type GtaCatalogItem = {
+  id: number;
+  numero: string | null;
+  contrato: string | null;
+  total: number;
+  quantidadeMachos: number;
+  quantidadeFemeas: number;
+};
+type GtaCatalogResponse = {
+  items?: GtaCatalogItem[];
+};
 type FechamentoState = {
   tabelaFrete: string;
   calculoFrete: string;
+  periodoProducaoAgricola: string;
   unidadeMedidaFrete: string;
   valorUnitarioFrete: string;
   valorCombustivel: string;
@@ -38,7 +65,7 @@ type FechamentoState = {
   cte: string;
   nfExterna: string;
 };
-type TabKey = "documento" | "atraso" | "espera" | "fechamento" | "calendario" | "gta";
+type TabKey = "documento" | "atraso" | "espera" | "fechamento" | "calendario" | "gta" | "contrato_servico";
 type PnPickerTarget = "transportador" | "contratante" | "motorista";
 type FluxoEtapa = "aguardando_entrada" | "aguardando_retorno" | "aguardando_finalizacao" | "peso_finalizado" | "fechado" | "cancelado" | "inconsistente";
 
@@ -76,7 +103,7 @@ type FormState = {
   pesoBruto: string;
   pesoTara: string;
   pesoLiquido: string;
-  operacao: string;
+  operação: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -113,12 +140,13 @@ const EMPTY_FORM: FormState = {
   pesoBruto: "0,00",
   pesoTara: "0,00",
   pesoLiquido: "0,00",
-  operacao: "CAMINHAO AGUARDANDO ENTRADA",
+  operação: "CAMINHAO AGUARDANDO ENTRADA",
 };
 
 const EMPTY_FECHAMENTO: FechamentoState = {
   tabelaFrete: "",
   calculoFrete: "",
+  periodoProducaoAgricola: "",
   unidadeMedidaFrete: "",
   valorUnitarioFrete: "0,00",
   valorCombustivel: "0,00",
@@ -141,8 +169,6 @@ const EMPTY_FECHAMENTO: FechamentoState = {
 const TABELA_FRETE_OPTIONS = ["Padrao", "Especial", "Safra"];
 const CALCULO_FRETE_OPTIONS = ["Por Cabeca", "Por KM", "Por Viagem", "Fixo"];
 const UNIDADE_MEDIDA_FRETE_OPTIONS = ["KG", "ARROBA", "TONELADA", "CAB", "VIAGEM"];
-const PESAGEM_ORIGEM_OPTIONS = ["Nao", "Sim"];
-const MAPA_PESAGEM_OPTIONS = ["Entrada de Animais", "Saida de Animais"];
 
 export default function PesagemEntradaAnimaisFormPage() {
   const router = useRouter();
@@ -154,6 +180,8 @@ export default function PesagemEntradaAnimaisFormPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("documento");
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [contratos, setContratos] = useState<ContratoOption[]>([]);
+  const [contratoSearch, setContratoSearch] = useState("");
+  const [loadingContratos, setLoadingContratos] = useState(false);
   const [itens, setItens] = useState<ItemOption[]>([]);
   const [itemSearch, setItemSearch] = useState("");
   const [loadingItens, setLoadingItens] = useState(false);
@@ -172,6 +200,11 @@ export default function PesagemEntradaAnimaisFormPage() {
   const [calendario, setCalendario] = useState<CalendarioRow[]>([]);
   const [gtaRows, setGtaRows] = useState<GtaRow[]>([]);
   const [fechamento, setFechamento] = useState<FechamentoState>(EMPTY_FECHAMENTO);
+  const [pesagemOrigemOptions, setPesagemOrigemOptions] = useState<CatalogOption[]>([]);
+  const [pesagemOrigemSearch, setPesagemOrigemSearch] = useState("");
+  const [loadingPesagemOrigemOptions, setLoadingPesagemOrigemOptions] = useState(false);
+  const [mapaPesagemOptions, setMapaPesagemOptions] = useState<CatalogOption[]>([]);
+  const [loadingMapaPesagemOptions, setLoadingMapaPesagemOptions] = useState(false);
   const itemCatalogOptions = useMemo(
     () =>
       itens.map((item) => ({
@@ -188,6 +221,22 @@ export default function PesagemEntradaAnimaisFormPage() {
       })),
     [equipamentos],
   );
+  const pesagemOrigemCatalogOptions = useMemo(
+    () => mergeCatalogOptionsWithCurrent(pesagemOrigemOptions, fechamento.pesagemOrigem),
+    [pesagemOrigemOptions, fechamento.pesagemOrigem],
+  );
+  const mapaPesagemCatalogOptions = useMemo(
+    () => mergeCatalogOptionsWithCurrent(mapaPesagemOptions, fechamento.mapaPesagem),
+    [mapaPesagemOptions, fechamento.mapaPesagem],
+  );
+  const contratoSelecionado = useMemo(
+    () => contratos.find((item) => String(item.id) === String(form.contratoId)) ?? null,
+    [contratos, form.contratoId],
+  );
+  const contratoSelecionadoLabel = useMemo(() => {
+    if (!contratoSelecionado) return "";
+    return `#${contratoSelecionado.id} | ${contratoSelecionado.numero || "S/N"} | ${contratoSelecionado.descricao || "-"}`;
+  }, [contratoSelecionado]);
   const fluxoEtapa = useMemo(
     () => getFluxoEtapa(form.status, parseCurrency(form.pesoBruto), parseCurrency(form.pesoTara)),
     [form.status, form.pesoBruto, form.pesoTara],
@@ -210,10 +259,11 @@ export default function PesagemEntradaAnimaisFormPage() {
 
   useEffect(() => {
     async function loadOpcoes() {
+      setLoadingContratos(true);
       try {
         const ts = Date.now();
         const [pesagemOpcoesRes, equipamentosRes, empresasRes] = await Promise.all([
-          fetch(`/api/pesagens/entrada-animais/opcoes?_ts=${ts}`, { cache: "no-store" }),
+          fetch(`/api/pesagens/entrada-animais/opcoes?contratoLimit=120&_ts=${ts}`, { cache: "no-store" }),
           fetch(`/api/cadastros/contratos/item-opcoes?itemSearch=equip&limit=300&_ts=${ts}`, { cache: "no-store" }),
           fetch(`/api/cadastros/empresas?limit=3000&_ts=${ts}`, { cache: "no-store" }),
         ]);
@@ -233,10 +283,108 @@ export default function PesagemEntradaAnimaisFormPage() {
           const empresas = (await empresasRes.json()) as FazendaOption[];
           setFazendas(Array.isArray(empresas) ? empresas : []);
         }
-      } catch {}
+      } catch {
+      } finally {
+        setLoadingContratos(false);
+      }
     }
     loadOpcoes().catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingContratos(true);
+        const ts = Date.now();
+        const search = contratoSearch.trim();
+        const response = await fetch(
+          `/api/pesagens/entrada-animais/opcoes?contratoLimit=140&contratoSearch=${encodeURIComponent(search)}&_ts=${ts}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as { contratos?: ContratoOption[] };
+        const loaded = Array.isArray(payload.contratos) ? payload.contratos : [];
+        if (!active) return;
+
+        setContratos((previous) => {
+          const selectedId = form.contratoId.trim();
+          if (!selectedId) return loaded;
+          const selected = previous.find((contrato) => String(contrato.id) === selectedId);
+          if (!selected) return loaded;
+          if (loaded.some((contrato) => contrato.id === selected.id)) return loaded;
+          return [selected, ...loaded];
+        });
+      } finally {
+        if (active) setLoadingContratos(false);
+      }
+    }, 220);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [contratoSearch, form.contratoId]);
+
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingPesagemOrigemOptions(true);
+        const ts = Date.now();
+        const search = pesagemOrigemSearch.trim();
+        const response = await fetch(
+          `/api/pesagens/entrada-animais?page=1&pageSize=120&search=${encodeURIComponent(search)}&_ts=${ts}`,
+          { cache: "no-store" },
+        );
+        if (!response.ok) return;
+        const data = (await response.json()) as PesagemListResponse;
+        if (!active) return;
+        setPesagemOrigemOptions(mapPesagemItemsToCatalogOptions(data.items ?? []));
+      } finally {
+        if (active) setLoadingPesagemOrigemOptions(false);
+      }
+    }, 220);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [pesagemOrigemSearch]);
+
+  useEffect(() => {
+    const contratoId = form.contratoId.trim();
+    if (!contratoId) {
+      setMapaPesagemOptions([]);
+      return;
+    }
+
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        setLoadingMapaPesagemOptions(true);
+        const ts = Date.now();
+        const response = await fetch(`/api/contratos/entrada-animais/${contratoId}?_ts=${ts}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as ContratoMapaResponse;
+        const linkedFromContrato = parseContratoLinkedGtaRows(data.contrato);
+        const linkedFromCadastro = await fetchCadastroLinkedGtaRows(contratoId, "entrada").catch(() => []);
+        const linkedRows = dedupeGtaRows([...linkedFromContrato, ...linkedFromCadastro]);
+        if (!active) return;
+        setMapaPesagemOptions(mapContratoMapasToCatalogOptions(data.mapas ?? []));
+        setGtaRows((prev) => mergeLinkedGtaRows(prev, linkedRows));
+      } finally {
+        if (active) setLoadingMapaPesagemOptions(false);
+      }
+    }, 180);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [form.contratoId]);
 
   useEffect(() => {
     const term = itemSearch.trim();
@@ -406,7 +554,7 @@ export default function PesagemEntradaAnimaisFormPage() {
           pesoBruto: toCurrency(data.pesoBruto),
           pesoTara: toCurrency(data.pesoTara),
           pesoLiquido: toCurrency(data.pesoLiquido),
-          operacao: toText(data.operacao),
+          operação: toText(data.operação),
         }));
         setDocumentosFiscais(parseDocumentosRows(data.documentosFiscais));
         setMotivosAtraso(parseMotivoRows(data.motivosAtraso));
@@ -461,11 +609,11 @@ export default function PesagemEntradaAnimaisFormPage() {
   async function capturarPeso(target: "pesoBruto" | "pesoTara") {
     setError("");
     if (target === "pesoBruto" && !canCapturarBruto) {
-      setError("Fluxo invalido: o peso bruto so pode ser capturado quando o caminhao esta em chegada.");
+      setError("Fluxo inválido: o peso bruto so pode ser capturado quando o caminhão esta em chegada.");
       return;
     }
     if (target === "pesoTara" && !canCapturarTara) {
-      setError("Fluxo invalido: capture o peso bruto na chegada antes de capturar a tara no retorno.");
+      setError("Fluxo inválido: capture o peso bruto na chegada antes de capturar a tara no retorno.");
       return;
     }
     try {
@@ -475,7 +623,14 @@ export default function PesagemEntradaAnimaisFormPage() {
         throw new Error(body?.error ?? "Falha ao capturar peso.");
       }
       const data = (await response.json()) as { peso?: number };
-      setForm((prev) => applyFluxoToForm({ ...prev, [target]: formatCurrency(Number(data.peso ?? 0)) }));
+      const captured = Number(data.peso ?? 0);
+      if (target === "pesoTara") {
+        const brutoAtual = parseCurrency(form.pesoBruto);
+        if (brutoAtual > 0 && captured > brutoAtual) {
+          throw new Error("Peso tara não pode ser maior que peso bruto.");
+        }
+      }
+      setForm((prev) => applyFluxoToForm({ ...prev, [target]: formatCurrency(captured) }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao capturar peso.");
     }
@@ -512,6 +667,16 @@ export default function PesagemEntradaAnimaisFormPage() {
     closePnPicker();
   }
 
+  function handleContratoChange(value: string) {
+    const contrato = contratos.find((item) => String(item.id) === value);
+    setGtaRows([]);
+    setForm((prev) => ({
+      ...prev,
+      contratoId: value,
+      contratoReferencia: contrato?.descricao ?? prev.contratoReferencia,
+    }));
+  }
+
   async function salvar() {
     setSaving(true);
     setError("");
@@ -519,21 +684,23 @@ export default function PesagemEntradaAnimaisFormPage() {
     try {
       const fluxo = getFluxoEtapa(form.status, parseCurrency(form.pesoBruto), parseCurrency(form.pesoTara));
       if (fluxo === "inconsistente") {
-        throw new Error("Fluxo invalido: a tara nao pode ser informada sem o peso bruto de chegada.");
+        throw new Error("Fluxo inválido: a tara não pode ser informada sem o peso bruto de chegada.");
       }
+      const validationError = validatePesagemForm(form);
+      if (validationError) throw new Error(validationError);
       const syncedForm = applyFluxoToForm(form);
       if (syncedForm !== form) setForm(syncedForm);
 
       const payload = {
         ...syncedForm,
         tipo: "entrada_animais",
-        contratoId: toNullableInt(syncedForm.contratoId),
-        itemId: toNullableInt(syncedForm.itemId),
-        fazendaId: toNullableInt(syncedForm.fazendaId),
-        transportadorId: toNullableInt(syncedForm.transportadorId),
-        contratanteId: toNullableInt(syncedForm.contratanteId),
-        motoristaId: toNullableInt(syncedForm.motoristaId),
-        equipamentoId: toNullableInt(syncedForm.equipamentoId),
+        contratoId: toNullablePositiveInt(syncedForm.contratoId),
+        itemId: toNullableIntAllowNegative(syncedForm.itemId),
+        fazendaId: toNullableIntAllowNegative(syncedForm.fazendaId),
+        transportadorId: toNullableIntAllowNegative(syncedForm.transportadorId),
+        contratanteId: toNullableIntAllowNegative(syncedForm.contratanteId),
+        motoristaId: toNullableIntAllowNegative(syncedForm.motoristaId),
+        equipamentoId: toNullableIntAllowNegative(syncedForm.equipamentoId),
         kmInicial: parseCurrency(syncedForm.kmInicial),
         kmFinal: parseCurrency(syncedForm.kmFinal),
         kmTotal: parseCurrency(syncedForm.kmTotal),
@@ -555,6 +722,7 @@ export default function PesagemEntradaAnimaisFormPage() {
         fechamento: {
           tabelaFrete: fechamento.tabelaFrete || null,
           calculoFrete: fechamento.calculoFrete || null,
+          periodoProducaoAgricola: fechamento.periodoProducaoAgricola || null,
           unidadeMedidaFrete: fechamento.unidadeMedidaFrete || null,
           valorUnitarioFrete: parseCurrency(fechamento.valorUnitarioFrete),
           valorCombustivel: parseCurrency(fechamento.valorCombustivel),
@@ -593,16 +761,39 @@ export default function PesagemEntradaAnimaisFormPage() {
   return (
     <div className="page-shell min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
-        <FormPageHeader title={editingId ? `Pesagem #${editingId}` : "Pesagem de Caminhao de Entrada de Animal"} subtitle="Cadastro de entrada de animais com pesos e eventos." backHref="/pesagens/entrada-animais" backLabel="Pesagens" />
+        <FormPageHeader title={editingId ? `Pesagem #${editingId}` : "Pesagem de Caminhão de Entrada de Animal"} subtitle="Cadastro de entrada de animais com pesos e eventos." backHref="/pesagens/entrada-animais" backLabel="Pesagens" />
         <ModuleHeader />
         <section className="card p-3">
           <div className="legacy-actions"><button type="button" className="legacy-btn primary" onClick={salvar} disabled={saving || loading}>{saving ? "Salvando..." : "Salvar"}</button><button type="button" className="legacy-btn" onClick={() => router.push("/pesagens/entrada-animais")}>Cancelar</button></div>
           {error && <p className="legacy-message error">{error}</p>}
           {success && <p className="legacy-message success">{success}</p>}
+          <div className="contract-active-bar">
+            <label className="contract-active-field">
+              <span>Pesquisar Contrato Ativo</span>
+              <input
+                className="legacy-input"
+                placeholder="Digite ID, numero ou descricao..."
+                value={contratoSearch}
+                onChange={(event) => setContratoSearch(event.target.value)}
+              />
+            </label>
+            <label className="contract-active-field">
+              <span>Contrato Ativo</span>
+              <select className="legacy-select contract-active-select" value={form.contratoId} onChange={(event) => handleContratoChange(event.target.value)}>
+                <option value="">Selecione contrato ativo...</option>
+                {contratos.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    #{item.id} | {item.numero || "S/N"} | {item.descricao || "-"}
+                  </option>
+                ))}
+              </select>
+              {loadingContratos && <small className="mt-1 block text-xs text-[#6b7394]">Carregando contratos...</small>}
+            </label>
+          </div>
 
           <div className="legacy-form mt-2">
             <div className="legacy-grid cols-4">
-              <label className="legacy-field"><span>Contrato</span><select className="legacy-select" value={form.contratoId} onChange={(e) => { const v = e.target.value; const c = contratos.find((x) => String(x.id) === v); setForm((p) => ({ ...p, contratoId: v, contratoReferencia: c?.descricao ?? p.contratoReferencia })); }}><option value="">Selecione...</option>{contratos.map((c) => <option key={c.id} value={c.id}>#{c.id} | {c.numero || "S/N"} | {c.descricao || "-"}</option>)}</select></label>
+              <label className="legacy-field"><span>Contrato Selecionado</span><input className="legacy-input" value={contratoSelecionadoLabel || "Nenhum contrato ativo selecionado"} readOnly /></label>
               <CatalogAutocompleteField
                 label="Item (SAP)"
                 className="legacy-field"
@@ -624,13 +815,13 @@ export default function PesagemEntradaAnimaisFormPage() {
               <label className="legacy-field"><span>Fazenda (Empresa)</span><select className="legacy-select" value={form.fazendaId} onChange={(e) => { const v = e.target.value; const empresa = fazendas.find((x) => String(x.id) === v); setForm((p) => ({ ...p, fazendaId: v, fazendaNome: empresa?.nome ?? p.fazendaNome })); }}><option value="">Selecione...</option>{fazendas.map((fazenda) => <option key={fazenda.id} value={fazenda.id}>{fazenda.codigo ? `${fazenda.codigo} - ` : ""}{fazenda.nome}</option>)}</select></label>
               <label className="legacy-field"><span>Tipo de Frente</span><select className="legacy-select" value={form.tipoFrete} onChange={(e) => setForm((p) => ({ ...p, tipoFrete: e.target.value }))}><option value="interno">Interno</option><option value="externo">Externo</option></select></label>
               <label className="legacy-field"><span>Responsavel Frete</span><select className="legacy-select" value={form.responsavelFrete} onChange={(e) => setForm((p) => ({ ...p, responsavelFrete: e.target.value }))}><option value="empresa">Empresa</option><option value="parceiro">Parceiro</option><option value="terceiro">Terceiro</option></select></label>
-              <PickerTriggerField label="Transportador (PN)" valueLabel={optionLabel(parceiros, form.transportadorId)} onOpen={() => openPnPicker("transportador")} loading={loadingParceiros} />
-              <PickerTriggerField label="Contratante (PN)" valueLabel={optionLabel(parceiros, form.contratanteId)} onOpen={() => openPnPicker("contratante")} loading={loadingParceiros} />
-              <PickerTriggerField label="Motorista (PN)" valueLabel={optionLabel(parceiros, form.motoristaId)} onOpen={() => openPnPicker("motorista")} loading={loadingParceiros} />
+              <PickerTriggerField label="Transportador (PN)" valueLabel={optionLabel(parceiros, form.transportadorId, form.transportadorNome)} onOpen={() => openPnPicker("transportador")} loading={loadingParceiros} />
+              <PickerTriggerField label="Contratante (PN)" valueLabel={optionLabel(parceiros, form.contratanteId, form.contratanteNome)} onOpen={() => openPnPicker("contratante")} loading={loadingParceiros} />
+              <PickerTriggerField label="Motorista (PN)" valueLabel={optionLabel(parceiros, form.motoristaId, form.motoristaNome)} onOpen={() => openPnPicker("motorista")} loading={loadingParceiros} />
               <label className="legacy-field"><span>Data Chegada</span><input type="date" className="legacy-input" value={form.dataChegada} onChange={(e) => setForm((p) => ({ ...p, dataChegada: e.target.value }))} /></label>
               <label className="legacy-field"><span>Hora Chegada</span><input type="time" className="legacy-input" value={form.horaChegada} onChange={(e) => setForm((p) => ({ ...p, horaChegada: e.target.value }))} /></label>
-              <label className="legacy-field"><span>Data Saida</span><input type="date" className="legacy-input" value={form.dataSaida} onChange={(e) => setForm((p) => ({ ...p, dataSaida: e.target.value }))} /></label>
-              <label className="legacy-field"><span>Hora Saida</span><input type="time" className="legacy-input" value={form.horaSaida} onChange={(e) => setForm((p) => ({ ...p, horaSaida: e.target.value }))} /></label>
+              <label className="legacy-field"><span>Data Saída</span><input type="date" className="legacy-input" value={form.dataSaida} onChange={(e) => setForm((p) => ({ ...p, dataSaida: e.target.value }))} /></label>
+              <label className="legacy-field"><span>Hora Saída</span><input type="time" className="legacy-input" value={form.horaSaida} onChange={(e) => setForm((p) => ({ ...p, horaSaida: e.target.value }))} /></label>
               <div className="legacy-field"><span>N Ticket</span><div className="legacy-inline"><input className="legacy-input" value={form.numeroTicket} onChange={(e) => setForm((p) => ({ ...p, numeroTicket: e.target.value }))} /><button type="button" className="legacy-btn" onClick={gerarNumeroTicket}>Gerar</button></div></div>
               <label className="legacy-field"><span>Placa</span><input className="legacy-input" value={form.placa} onChange={(e) => setForm((p) => ({ ...p, placa: e.target.value.toUpperCase() }))} /></label>
               <CatalogAutocompleteField
@@ -652,9 +843,9 @@ export default function PesagemEntradaAnimaisFormPage() {
                 }}
               />
               <label className="legacy-field"><span>Viagem</span><input className="legacy-input" value={form.viagem} onChange={(e) => setForm((p) => ({ ...p, viagem: e.target.value }))} /></label>
-              <label className="legacy-field"><span>Data Inicio</span><input type="date" className="legacy-input" value={form.dataInicio} onChange={(e) => setForm((p) => ({ ...p, dataInicio: e.target.value }))} /></label>
+              <label className="legacy-field"><span>Data Início</span><input type="date" className="legacy-input" value={form.dataInicio} onChange={(e) => setForm((p) => ({ ...p, dataInicio: e.target.value }))} /></label>
               <label className="legacy-field"><span>Data Fim</span><input type="date" className="legacy-input" value={form.dataFim} onChange={(e) => setForm((p) => ({ ...p, dataFim: e.target.value }))} /></label>
-              <label className="legacy-field"><span>Fluxo Caminhao</span><input className="legacy-input" value={form.operacao} readOnly /></label>
+              <label className="legacy-field"><span>Fluxo Caminhão</span><input className="legacy-input" value={form.operação} readOnly /></label>
               <label className="legacy-field"><span>KM Inicial</span><input className="legacy-input" value={form.kmInicial} onChange={(e) => setForm((p) => ({ ...p, kmInicial: sanitizeDecimal(e.target.value) }))} /></label>
               <label className="legacy-field"><span>KM Final</span><input className="legacy-input" value={form.kmFinal} onChange={(e) => setForm((p) => ({ ...p, kmFinal: sanitizeDecimal(e.target.value) }))} /></label>
               <label className="legacy-field"><span>KM Total</span><input className="legacy-input" value={form.kmTotal} readOnly /></label>
@@ -663,11 +854,11 @@ export default function PesagemEntradaAnimaisFormPage() {
               <div className="legacy-field"><span>&nbsp;</span><button type="button" className="legacy-btn capture-btn capture-btn-bruto" onClick={() => capturarPeso("pesoBruto")} disabled={!canCapturarBruto || saving || loading}>Capturar Bruto</button></div>
               <label className="legacy-field"><span>Peso Tara</span><input className="legacy-input" value={form.pesoTara} readOnly={readOnlyPesoTara} onChange={(e) => setForm((p) => applyFluxoToForm({ ...p, pesoTara: sanitizeDecimal(e.target.value) }))} /></label>
               <div className="legacy-field"><span>&nbsp;</span><button type="button" className="legacy-btn capture-btn capture-btn-tara" onClick={() => capturarPeso("pesoTara")} disabled={!canCapturarTara || saving || loading}>Capturar Tara</button></div>
-              <label className="legacy-field"><span>Peso Liquido</span><input className="legacy-input" value={form.pesoLiquido} readOnly /></label>
-              <label className="legacy-field"><span>Status</span><select className="legacy-select" value={form.status} disabled={!canEditarStatusManual} onChange={(e) => setForm((p) => applyFluxoToForm({ ...p, status: normalizeStatus(e.target.value) }))}><option value="disponivel">Disponivel</option>{(fluxoEtapa === "aguardando_finalizacao" || fluxoEtapa === "peso_finalizado" || form.status === "peso_finalizado") && <option value="peso_finalizado">Peso Finalizado</option>}<option value="fechado">Fechado</option><option value="cancelado">Cancelado</option></select></label>
+              <label className="legacy-field"><span>Peso Líquido</span><input className="legacy-input" value={form.pesoLiquido} readOnly /></label>
+              <label className="legacy-field"><span>Status</span><select className="legacy-select" value={form.status} disabled={!canEditarStatusManual} onChange={(e) => setForm((p) => applyFluxoToForm({ ...p, status: normalizeStatus(e.target.value) }))}><option value="disponivel">Disponível</option>{(fluxoEtapa === "aguardando_finalizacao" || fluxoEtapa === "peso_finalizado" || form.status === "peso_finalizado") && <option value="peso_finalizado">Peso Finalizado</option>}<option value="fechado">Fechado</option><option value="cancelado">Cancelado</option></select></label>
               <label className="legacy-field col-span-2"><span>Etapa Atual</span><input className="legacy-input" value={getFluxoLabel(fluxoEtapa)} readOnly /></label>
             </div>
-            {fluxoEtapa === "inconsistente" && <p className="legacy-message error mt-2">Fluxo invalido: a tara foi informada sem peso bruto de chegada.</p>}
+            {fluxoEtapa === "inconsistente" && <p className="legacy-message error mt-2">Fluxo inválido: a tara foi informada sem peso bruto de chegada.</p>}
             {fluxoEtapa === "aguardando_finalizacao" && <p className="legacy-message mt-2">Tara capturada. Clique em salvar para finalizar a pesagem.</p>}
             <div className="legacy-tabs mt-3">
               <button type="button" className={`legacy-tab ${activeTab === "documento" ? "active" : ""}`} onClick={() => setActiveTab("documento")}>Documento Fiscal</button>
@@ -676,14 +867,37 @@ export default function PesagemEntradaAnimaisFormPage() {
               <button type="button" className={`legacy-tab ${activeTab === "fechamento" ? "active" : ""}`} onClick={() => setActiveTab("fechamento")}>Fechamento</button>
               <button type="button" className={`legacy-tab ${activeTab === "calendario" ? "active" : ""}`} onClick={() => setActiveTab("calendario")}>Calendario</button>
               <button type="button" className={`legacy-tab ${activeTab === "gta" ? "active" : ""}`} onClick={() => setActiveTab("gta")}>GTA</button>
+              <button type="button" className={`legacy-tab ${activeTab === "contrato_servico" ? "active" : ""}`} onClick={() => setActiveTab("contrato_servico")}>Contrato Servico</button>
             </div>
 
             {activeTab === "documento" && <SimpleListEditor rows={documentosFiscais} setRows={setDocumentosFiscais} keyName="documento" label="Documento" />}
             {activeTab === "atraso" && <MotivoListEditor rows={motivosAtraso} setRows={setMotivosAtraso} />}
             {activeTab === "espera" && <MotivoListEditor rows={motivosEspera} setRows={setMotivosEspera} />}
-            {activeTab === "fechamento" && <FechamentoEditor state={fechamento} onChange={setFechamento} />}
+            {activeTab === "fechamento" && (
+              <FechamentoEditor
+                state={fechamento}
+                onChange={setFechamento}
+                pesagemOrigemOptions={pesagemOrigemCatalogOptions}
+                mapaPesagemOptions={mapaPesagemCatalogOptions}
+                loadingPesagemOrigem={loadingPesagemOrigemOptions}
+                loadingMapaPesagem={loadingMapaPesagemOptions}
+                onPesagemOrigemSearch={setPesagemOrigemSearch}
+              />
+            )}
             {activeTab === "calendario" && <CalendarioEditor rows={calendario} setRows={setCalendario} />}
             {activeTab === "gta" && <GtaListEditor rows={gtaRows} setRows={setGtaRows} />}
+            {activeTab === "contrato_servico" && (
+              <ContratoServicoTab
+                contratos={contratos}
+                selectedContratoId={form.contratoId}
+                onSelect={(contrato) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    contratoId: String(contrato.id),
+                    contratoReferencia: contrato.descricao ?? prev.contratoReferencia,
+                  }))}
+              />
+            )}
           </div>
         </section>
 
@@ -743,9 +957,19 @@ export default function PesagemEntradaAnimaisFormPage() {
 function FechamentoEditor({
   state,
   onChange,
+  pesagemOrigemOptions,
+  mapaPesagemOptions,
+  loadingPesagemOrigem,
+  loadingMapaPesagem,
+  onPesagemOrigemSearch,
 }: {
   state: FechamentoState;
   onChange: (next: FechamentoState) => void;
+  pesagemOrigemOptions: CatalogOption[];
+  mapaPesagemOptions: CatalogOption[];
+  loadingPesagemOrigem?: boolean;
+  loadingMapaPesagem?: boolean;
+  onPesagemOrigemSearch?: (value: string) => void;
 }) {
   return (
     <div className="mt-2">
@@ -767,6 +991,15 @@ function FechamentoEditor({
           </select>
         </label>
         <label className="legacy-field">
+          <span>Periodo Producao Agricola</span>
+          <input
+            className="legacy-input"
+            value={state.periodoProducaoAgricola}
+            onChange={(event) => onChange({ ...state, periodoProducaoAgricola: event.target.value })}
+            placeholder="Ex.: Safra 2026/2027"
+          />
+        </label>
+        <label className="legacy-field">
           <span>Unidade Medida Frete</span>
           <select className="legacy-select" value={state.unidadeMedidaFrete} onChange={(event) => onChange({ ...state, unidadeMedidaFrete: event.target.value })}>
             <option value="">Selecione...</option>
@@ -785,25 +1018,29 @@ function FechamentoEditor({
         <label className="legacy-field"><span>Valor Comissao</span><input className="legacy-input" value={state.valorComissao} onChange={(event) => onChange({ ...state, valorComissao: sanitizeDecimal(event.target.value) })} /></label>
         <label className="legacy-field"><span>Valor Frete</span><input className="legacy-input" value={state.valorFrete} onChange={(event) => onChange({ ...state, valorFrete: sanitizeDecimal(event.target.value) })} /></label>
 
-        <label className="legacy-field">
-          <span>Pesagem Origem</span>
-          <select className="legacy-select" value={state.pesagemOrigem} onChange={(event) => onChange({ ...state, pesagemOrigem: event.target.value })}>
-            <option value="">Selecione...</option>
-            {PESAGEM_ORIGEM_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-            {state.pesagemOrigem && !PESAGEM_ORIGEM_OPTIONS.includes(state.pesagemOrigem) && <option value={state.pesagemOrigem}>{state.pesagemOrigem}</option>}
-          </select>
-        </label>
+        <CatalogAutocompleteField
+          label="Pesagem Origem"
+          options={pesagemOrigemOptions}
+          value={state.pesagemOrigem}
+          onValueChange={(value) => onChange({ ...state, pesagemOrigem: value })}
+          onSearchTextChange={onPesagemOrigemSearch}
+          listId="pesagem-origem"
+          loading={loadingPesagemOrigem}
+          fallbackLabel={state.pesagemOrigem}
+        />
         <label className="legacy-field"><span>Data Vencimento</span><input type="date" className="legacy-input" value={state.dataVencimento} onChange={(event) => onChange({ ...state, dataVencimento: event.target.value })} /></label>
         <label className="legacy-field"><span>Qtd Animais</span><input className="legacy-input" value={state.qtdAnimais} onChange={(event) => onChange({ ...state, qtdAnimais: sanitizeInteger(event.target.value) })} /></label>
         <label className="legacy-field"><span>Qtd Animais Origem</span><input className="legacy-input" value={state.qtdAnimaisOrigem} onChange={(event) => onChange({ ...state, qtdAnimaisOrigem: sanitizeInteger(event.target.value) })} /></label>
-        <label className="legacy-field col-span-2">
-          <span>Mapa Pesagem</span>
-          <select className="legacy-select" value={state.mapaPesagem} onChange={(event) => onChange({ ...state, mapaPesagem: event.target.value })}>
-            <option value="">Selecione...</option>
-            {MAPA_PESAGEM_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-            {state.mapaPesagem && !MAPA_PESAGEM_OPTIONS.includes(state.mapaPesagem) && <option value={state.mapaPesagem}>{state.mapaPesagem}</option>}
-          </select>
-        </label>
+        <CatalogAutocompleteField
+          label="Mapa Pesagem"
+          options={mapaPesagemOptions}
+          value={state.mapaPesagem}
+          onValueChange={(value) => onChange({ ...state, mapaPesagem: value })}
+          listId="mapa-pesagem"
+          className="legacy-field col-span-2"
+          loading={loadingMapaPesagem}
+          fallbackLabel={state.mapaPesagem}
+        />
 
         <label className="legacy-field"><span>CTE</span><input className="legacy-input" value={state.cte} onChange={(event) => onChange({ ...state, cte: event.target.value.toUpperCase() })} /></label>
         <label className="legacy-field"><span>NF Externa</span><input className="legacy-input" value={state.nfExterna} onChange={(event) => onChange({ ...state, nfExterna: event.target.value.toUpperCase() })} /></label>
@@ -864,9 +1101,9 @@ function GtaListEditor({ rows, setRows }: { rows: GtaRow[]; setRows: (rows: GtaR
             <tr>
               <th>GTA</th>
               <th>Quantidade Machos</th>
-              <th>Quantidade Femeas</th>
+              <th>Quantidade Fêmeas</th>
               <th>Quantidade Total</th>
-              <th>Acoes</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -911,6 +1148,82 @@ function GtaListEditor({ rows, setRows }: { rows: GtaRow[]; setRows: (rows: GtaR
                 </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ContratoServicoTab({
+  contratos,
+  selectedContratoId,
+  onSelect,
+}: {
+  contratos: ContratoOption[];
+  selectedContratoId: string;
+  onSelect: (contrato: ContratoOption) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    const term = normalizeSearchTerm(search);
+    if (!term) return contratos;
+    return contratos.filter((contrato) => {
+      const id = String(contrato.id);
+      const numero = normalizeSearchTerm(contrato.numero ?? "");
+      const descricao = normalizeSearchTerm(contrato.descricao ?? "");
+      return id.includes(term) || numero.includes(term) || descricao.includes(term);
+    });
+  }, [contratos, search]);
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="legacy-inline">
+        <input
+          className="legacy-input"
+          placeholder="Pesquisar contrato ativo..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </div>
+      <div className="legacy-table-wrap">
+        <table className="legacy-table">
+          <thead>
+            <tr>
+              <th style={{ width: "36px" }} />
+              <th>ID</th>
+              <th>Numero</th>
+              <th>Descricao</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={4} className="legacy-empty">Nenhum contrato ativo encontrado.</td>
+              </tr>
+            )}
+            {filtered.map((contrato) => {
+              const checked = String(contrato.id) === String(selectedContratoId);
+              return (
+                <tr
+                  key={contrato.id}
+                  onClick={() => onSelect(contrato)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => onSelect(contrato)}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  </td>
+                  <td>{contrato.id}</td>
+                  <td>{contrato.numero || "-"}</td>
+                  <td className="left">{contrato.descricao || "-"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -988,7 +1301,7 @@ function CatalogAutocompleteField({
   const [text, setText] = useState(selectedLabel);
   const [isFocused, setIsFocused] = useState(false);
   const stableSelectedLabel = selectedLabel || normalizeItemDisplayLabel(value) || text;
-  const inputValue = isFocused ? text : value ? stableSelectedLabel : text;
+  const inputValue = isFocused ? text : value ? stableSelectedLabel : selectedLabel || text;
   const filteredOptions = filterCatalogOptions(options, inputValue, value);
 
   function handleChange(nextText: string) {
@@ -1026,13 +1339,17 @@ function CatalogAutocompleteField({
         onChange={(event) => handleChange(event.target.value)}
         onFocus={() => {
           setIsFocused(true);
-          const startText = value && selectedLabel ? selectedLabel : text;
+          const startText = selectedLabel || text;
           setText(startText);
           onSearchTextChange?.(startText);
         }}
         onBlur={() => {
           setIsFocused(false);
-          if (value) setText(stableSelectedLabel);
+          if (value) {
+            setText(stableSelectedLabel);
+            return;
+          }
+          if (selectedLabel) setText(selectedLabel);
         }}
       />
       <datalist id={`catalog-${listId}`}>
@@ -1058,16 +1375,77 @@ function mapCatalogOptions(options: CatalogOption[]): ItemOption[] {
   });
 }
 
-function optionLabel(options: ParceiroOption[], value: string): string {
-  if (!value) return "";
+function mapPesagemItemsToCatalogOptions(items: PesagemListItem[]): CatalogOption[] {
+  const mapped = items
+    .filter((item) => Number.isFinite(item.id) && item.id > 0)
+    .map((item) => {
+      const parts = [`#${item.id}`];
+      if (item.numeroTicket) parts.push(`TK ${item.numeroTicket}`);
+      if (item.placa) parts.push(`Placa ${item.placa}`);
+      if (item.dataChegada) {
+        const dateText = toDateInput(item.dataChegada);
+        if (dateText) parts.push(`Chegada ${dateText}`);
+      }
+      if (item.motorista) parts.push(item.motorista);
+      return {
+        value: String(item.id),
+        label: parts.join(" | "),
+      };
+    });
+  return dedupeCatalogOptions(mapped);
+}
+
+function mapContratoMapasToCatalogOptions(mapas: Record<string, unknown>[]): CatalogOption[] {
+  const mapped = mapas.map((row, index) => {
+    const numero = toText(row.numeroMapa ?? row.numero ?? row.id);
+    const dataPesagem = toDateInput(row.dataPesagem ?? row.data);
+    const placa = toText(row.placa);
+    const motorista = toText(row.motorista);
+    const baseLabel = numero ? `Mapa ${numero}` : `Mapa ${index + 1}`;
+    const suffix = [dataPesagem ? `Data ${dataPesagem}` : "", placa ? `Placa ${placa}` : "", motorista]
+      .filter(Boolean)
+      .join(" | ");
+    const label = suffix ? `${baseLabel} | ${suffix}` : baseLabel;
+    return {
+      value: numero || label,
+      label,
+    };
+  });
+  return dedupeCatalogOptions(mapped);
+}
+
+function dedupeCatalogOptions(options: CatalogOption[]): CatalogOption[] {
+  const seen = new Set<string>();
+  const unique: CatalogOption[] = [];
+  for (const option of options) {
+    const value = String(option.value ?? "").trim();
+    const label = String(option.label ?? "").trim();
+    if (!value || !label) continue;
+    const key = `${value.toLowerCase()}|${label.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ value, label });
+  }
+  return unique;
+}
+
+function mergeCatalogOptionsWithCurrent(options: CatalogOption[], currentValue: string): CatalogOption[] {
+  const value = String(currentValue ?? "").trim();
+  if (!value) return options;
+  if (options.some((option) => option.value === value)) return options;
+  return [{ value, label: value }, ...options];
+}
+
+function optionLabel(options: ParceiroOption[], value: string, fallbackName?: string): string {
+  if (!value) return (fallbackName ?? "").trim();
   const option = options.find((item) => String(item.id) === String(value));
-  if (!option) return "";
+  if (!option) return (fallbackName ?? "").trim();
   const documento = option.documento ? ` - ${formatCpfCnpj(option.documento)}` : "";
   return `${option.codigo ?? "SEM-COD"} - ${option.nome}${documento}`;
 }
 
 function upsertParceiroOption(current: ParceiroOption[], patch: { id: number; nome: string }): ParceiroOption[] {
-  if (!Number.isFinite(patch.id) || patch.id <= 0 || !patch.nome.trim()) return current;
+  if (!Number.isFinite(patch.id) || patch.id === 0 || !patch.nome.trim()) return current;
   const exists = current.some((item) => item.id === patch.id);
   if (exists) return current;
   return [
@@ -1173,10 +1551,10 @@ function getFluxoLabel(etapa: FluxoEtapa): string {
 function applyFluxoToForm(current: FormState): FormState {
   const etapa = getFluxoEtapa(current.status, parseCurrency(current.pesoBruto), parseCurrency(current.pesoTara));
   const nextOperacao = getFluxoOperacao(etapa);
-  if (current.operacao === nextOperacao) return current;
+  if (current.operação === nextOperacao) return current;
   return {
     ...current,
-    operacao: nextOperacao,
+    operação: nextOperacao,
   };
 }
 
@@ -1187,13 +1565,87 @@ function formatCurrency(value: number): string { return (Number.isFinite(value) 
 function sanitizeDecimal(value: string): string { return value.replace(/[^0-9,.-]/g, ""); }
 function sanitizeInteger(value: string): string { return value.replace(/\D/g, ""); }
 function toText(value: unknown): string { return String(value ?? "").trim(); }
-function toNullableInt(value: string): number | null { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
+function toNullablePositiveInt(value: string): number | null { const parsed = Number.parseInt(value, 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : null; }
+function toNullableIntAllowNegative(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed === 0) return null;
+  return parsed;
+}
 function toCurrency(value: unknown): string { const parsed = Number(value); return Number.isFinite(parsed) ? formatCurrency(parsed) : "0,00"; }
 function toDateInput(value: unknown): string { const text = toText(value); const m = text.match(/^(\d{4}-\d{2}-\d{2})/); if (m) return m[1]; const d = new Date(text); return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10); }
 function toTimeInput(value: unknown): string { const text = toText(value); const m = text.match(/^(\d{2}:\d{2})/); return m?.[1] ?? ""; }
 function parseDocumentosRows(value: unknown): DocumentoFiscal[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => ({ documento: toText((item as Record<string, unknown>).documento) })); }
 function parseMotivoRows(value: unknown): MotivoRow[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => { const row = item as Record<string, unknown>; return { motivo: toText(row.motivo), tempoMinutos: String(Number.parseInt(String(row.tempoMinutos ?? 0), 10) || 0) }; }); }
 function parseCalendarioRows(value: unknown): CalendarioRow[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object" && !Array.isArray(item)).map((item) => { const row = item as Record<string, unknown>; return { data: toDateInput(row.data), dia: toText(row.dia), feriado: toBool(row.feriado), pago: toBool(row.pago), valor: toCurrency(row.valor) }; }); }
+function toRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function parseIntegerUnknown(value: unknown): number { return parseInteger(String(value ?? "0")); }
+function toGtaRow(value: { gta: unknown; quantidadeMachos: unknown; quantidadeFemeas: unknown; quantidadeTotal: unknown }): GtaRow {
+  const quantidadeMachos = String(parseIntegerUnknown(value.quantidadeMachos));
+  const quantidadeFemeas = String(parseIntegerUnknown(value.quantidadeFemeas));
+  const totalRaw = parseIntegerUnknown(value.quantidadeTotal);
+  const quantidadeTotal = String(totalRaw > 0 ? totalRaw : parseInteger(quantidadeMachos) + parseInteger(quantidadeFemeas));
+  return {
+    gta: toText(value.gta),
+    quantidadeMachos,
+    quantidadeFemeas,
+    quantidadeTotal,
+  };
+}
+function parseContratoLinkedGtaRows(contrato: unknown): GtaRow[] {
+  const dadosGerais = toRecord(toRecord(contrato).dadosGerais);
+  const linhas = dadosGerais.gtaContratos;
+  if (!Array.isArray(linhas)) return [];
+  return linhas
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => {
+      const row = item as Record<string, unknown>;
+      return toGtaRow({
+        gta: row.gta ?? row.numero ?? row.id,
+        quantidadeMachos: row.quantidadeMachos ?? row.qtdMacho,
+        quantidadeFemeas: row.quantidadeFemeas ?? row.qtdFemea,
+        quantidadeTotal: row.quantidadeTotal ?? row.qtd ?? row.total,
+      });
+    })
+    .filter((row) => row.gta.length > 0);
+}
+function mapCatalogItemToGtaRow(item: GtaCatalogItem): GtaRow {
+  return toGtaRow({
+    gta: toText(item.numero) || `#${item.id}`,
+    quantidadeMachos: item.quantidadeMachos,
+    quantidadeFemeas: item.quantidadeFemeas,
+    quantidadeTotal: item.total,
+  });
+}
+function dedupeGtaRows(rows: GtaRow[]): GtaRow[] {
+  const deduped = new Map<string, GtaRow>();
+  for (const row of rows) {
+    const key = normalizeSearchTerm(row.gta);
+    if (!key) continue;
+    if (!deduped.has(key)) deduped.set(key, row);
+  }
+  return Array.from(deduped.values());
+}
+function mergeLinkedGtaRows(current: GtaRow[], linked: GtaRow[]): GtaRow[] {
+  if (linked.length === 0) return current;
+  return dedupeGtaRows([...linked, ...current]);
+}
+async function fetchCadastroLinkedGtaRows(contratoId: string, tipo: "entrada" | "saida"): Promise<GtaRow[]> {
+  const term = contratoId.trim();
+  if (!term) return [];
+  const params = new URLSearchParams({
+    tipo,
+    page: "1",
+    pageSize: "100",
+    search: `#${term}`,
+  });
+  const response = await fetch(`/api/gta?${params.toString()}`, { cache: "no-store" });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as GtaCatalogResponse;
+  if (!Array.isArray(payload.items)) return [];
+  return payload.items
+    .filter((item) => normalizeSearchTerm(toText(item.contrato)).includes(`#${term}`))
+    .map(mapCatalogItemToGtaRow);
+}
 function parseGtaRows(value: unknown): GtaRow[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -1220,6 +1672,7 @@ function parseFechamentoState(value: unknown): FechamentoState {
   return {
     tabelaFrete: toText(row.tabelaFrete),
     calculoFrete: toText(row.calculoFrete),
+    periodoProducaoAgricola: toText(row.periodoProducaoAgricola),
     unidadeMedidaFrete: toText(row.unidadeMedidaFrete),
     valorUnitarioFrete: toCurrency(row.valorUnitarioFrete),
     valorCombustivel: toCurrency(row.valorCombustivel),
@@ -1239,4 +1692,42 @@ function parseFechamentoState(value: unknown): FechamentoState {
     nfExterna: toText(row.nfExterna),
   };
 }
+function validatePesagemForm(form: FormState): string | null {
+  const pesoBruto = parseCurrency(form.pesoBruto);
+  const pesoTara = parseCurrency(form.pesoTara);
+  if (pesoBruto > 0 && pesoTara > pesoBruto) {
+    return "Peso tara não pode ser maior que peso bruto.";
+  }
+
+  const chegada = combineDateTime(form.dataChegada, form.horaChegada);
+  const saida = combineDateTime(form.dataSaida, form.horaSaida);
+  if (chegada && saida && saida.getTime() < chegada.getTime()) {
+    return "Data/Hora de saida não pode ser anterior a Data/Hora de chegada.";
+  }
+
+  const inicio = parseDateOnly(form.dataInicio);
+  const fim = parseDateOnly(form.dataFim);
+  if (inicio && fim && fim.getTime() < inicio.getTime()) {
+    return "Data fim não pode ser anterior a data inicio.";
+  }
+
+  return null;
+}
+
+function parseDateOnly(value: string): Date | null {
+  const text = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  return new Date(`${text}T00:00:00`);
+}
+
+function combineDateTime(dateValue: string, timeValue: string): Date | null {
+  const dateText = String(dateValue ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const timeText = String(timeValue ?? "").trim();
+  const normalizedTime = /^\d{2}:\d{2}$/.test(timeText) ? `${timeText}:00` : "00:00:00";
+  const full = `${dateText}T${normalizedTime}`;
+  const parsed = new Date(full);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 function toBool(value: unknown): boolean { if (typeof value === "boolean") return value; const normalized = String(value ?? "").trim().toLowerCase(); return normalized === "1" || normalized === "true" || normalized === "sim" || normalized === "s"; }
+

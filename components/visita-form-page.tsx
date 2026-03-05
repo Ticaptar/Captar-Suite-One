@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -52,8 +52,8 @@ type FormState = {
 
 const STATUS_OPTIONS: Array<{ value: VisitaStatus; label: string }> = [
   { value: "oportunidade", label: "Oportunidade" },
-  { value: "em_analise", label: "Em analise" },
-  { value: "negociacao", label: "Negociacao" },
+  { value: "em_analise", label: "Em análise" },
+  { value: "negociacao", label: "Negociação" },
   { value: "contrato_gerado", label: "Contrato gerado" },
   { value: "perdida", label: "Perdida" },
   { value: "arquivada", label: "Arquivada" },
@@ -266,7 +266,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
 
   const saveVisita = async () => {
     if (isLocked) {
-      setError("Visita com contrato gerado nao pode ser editada.");
+      setError("Visita com contrato gerado não pode ser editada.");
       return;
     }
     setSaving(true); setError(""); setMessage("");
@@ -340,7 +340,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
       return;
     }
     if (digits.length !== 8) {
-      setCepFeedback("CEP invalido. Informe 8 digitos.");
+      setCepFeedback("CEP inválido. Informe 8 dígitos.");
       return;
     }
 
@@ -364,7 +364,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
         cidade: normalizeAddressField(body?.cidade) || p.cidade,
         estado: normalizeAddressField(body?.estado) || p.estado,
       }));
-      setCepFeedback("Endereco preenchido a partir do CEP.");
+      setCepFeedback("Endereço preenchido a partir do CEP.");
     } catch (e) {
       setCepFeedback(e instanceof Error ? e.message : "Falha ao consultar CEP.");
     } finally {
@@ -392,7 +392,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
               <PickerTriggerField label="Parceiro (PN/Lead)" className="col-span-2" valueLabel={form.parceiroBusca} onOpen={() => openPnPicker("parceiro")} />
               <PickerTriggerField label="Responsavel (PN)" className="col-span-2" valueLabel={form.responsavelBusca} onOpen={() => openPnPicker("responsavel")} />
               <FieldInput label={cepLoading ? "CEP (Buscando...)" : "CEP"} value={form.cep} onChange={handleCepChange} onBlur={() => { void lookupCep(form.cep); }} />
-              <FieldInput label="Endereco" className="col-span-2" value={form.endereco} onChange={(v) => setForm((p) => ({ ...p, endereco: v }))} />
+              <FieldInput label="Endereço" className="col-span-2" value={form.endereco} onChange={(v) => setForm((p) => ({ ...p, endereco: v }))} />
               <FieldInput label="Complemento" value={form.complemento} onChange={(v) => setForm((p) => ({ ...p, complemento: v }))} />
               <FieldInput label="Bairro" value={form.bairro} onChange={(v) => setForm((p) => ({ ...p, bairro: v }))} />
               <FieldInput label="Cidade" value={form.cidade} onChange={(v) => setForm((p) => ({ ...p, cidade: v }))} />
@@ -464,7 +464,7 @@ export function VisitaFormPage({ visitaId }: { visitaId?: number }) {
                       <th>Codigo</th>
                       <th>Nome</th>
                       <th>Documento</th>
-                      <th>Acoes</th>
+                      <th>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -550,7 +550,7 @@ function PickerTriggerField({
   );
 }
 function SimpleTable({ headers, rows, onRemove }: { headers: string[]; rows: string[][]; onRemove: (index: number) => void }) {
-  return <div className="legacy-table-wrap mt-2"><table className="legacy-table"><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}<th>Acoes</th></tr></thead><tbody>{rows.length === 0 && <tr><td colSpan={headers.length + 1} className="legacy-empty">Nenhum registro adicionado.</td></tr>}{rows.map((r, i) => <tr key={i}>{r.map((c, cIndex) => <td key={`${i}-${cIndex}`} className={cIndex === 0 ? "left" : ""}>{c || "-"}</td>)}<td><button type="button" className="legacy-btn" onClick={() => onRemove(i)}>Remover</button></td></tr>)}</tbody></table></div>;
+  return <div className="legacy-table-wrap mt-2"><table className="legacy-table"><thead><tr>{headers.map((h) => <th key={h}>{h}</th>)}<th>Ações</th></tr></thead><tbody>{rows.length === 0 && <tr><td colSpan={headers.length + 1} className="legacy-empty">Nenhum registro adicionado.</td></tr>}{rows.map((r, i) => <tr key={i}>{r.map((c, cIndex) => <td key={`${i}-${cIndex}`} className={cIndex === 0 ? "left" : ""}>{c || "-"}</td>)}<td><button type="button" className="legacy-btn" onClick={() => onRemove(i)}>Remover</button></td></tr>)}</tbody></table></div>;
 }
 
 async function fetchParceiros(search: string): Promise<ParceiroOption[]> {
@@ -591,3 +591,4 @@ function normalizeAddressField(value: string | null | undefined): string {
   const text = String(value ?? "").trim();
   return text ? text.toUpperCase() : "";
 }
+

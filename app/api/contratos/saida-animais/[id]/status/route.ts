@@ -56,6 +56,14 @@ export async function POST(request: Request, { params }: Params) {
         return NextResponse.json({ error: "Contrato nao encontrado." }, { status: 404 });
       }
 
+      const statusAtual = normalizeStatusValue((contratoAtual as { status?: string | null }).status);
+      if (statusAtual === "ativo" && !body.forcarGeracao) {
+        return NextResponse.json(
+          { error: "Contrato ja esta ativo. Geracao de novo pedido bloqueada para evitar duplicidade." },
+          { status: 409 },
+        );
+      }
+
       const pedidoExistente = getPedidoExistenteFromContrato(contratoAtual);
       if (pedidoExistente && !body.forcarGeracao) {
         sapPedido = { ...pedidoExistente, jaExistente: true };
@@ -98,3 +106,12 @@ export async function PATCH(request: Request, context: Params) {
   return POST(request, context);
 }
 
+function normalizeStatusValue(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\/\s]+/g, "_");
+}

@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from "pg";
+﻿import type { Pool, PoolClient } from "pg";
 import { getPgPool } from "@/lib/db";
 import type {
   PesagemCalendarioRow,
@@ -24,6 +24,7 @@ const GTA_TABLE = "agro.pesagem_veiculo_gta";
 const FECHAMENTO_TABLE = "agro.pesagem_veiculo_fechamento";
 const tableExistsCache = new Map<string, boolean>();
 let pesagemSchemaEnsured = false;
+const CONTRATO_TIPO_NORMALIZED_SQL = "replace(replace(lower(trim(coalesce(tp_contrato, ''))), '-', '_'), ' ', '_')";
 
 const validStatuses = new Set<PesagemStatus>([
   "disponivel",
@@ -368,10 +369,16 @@ export async function updatePesagemEntradaAnimais(id: number, input: PesagemEntr
   }
 }
 
-export async function listPesagemEntradaAnimaisOptions(): Promise<PesagemEntradaAnimaisOptionsPayload> {
+export async function listPesagemEntradaAnimaisOptions(filters?: {
+  contratoSearch?: string | null;
+  contratoLimit?: number | null;
+}): Promise<PesagemEntradaAnimaisOptionsPayload> {
   const pool = getPgPool();
   await ensurePesagemSchema(pool);
-  const contratos = await loadContratosOptions(pool);
+  const contratos = await loadContratosOptions(pool, {
+    search: filters?.contratoSearch ?? null,
+    limit: filters?.contratoLimit ?? null,
+  });
   return {
     contratos,
     itens: [],
@@ -383,16 +390,30 @@ export async function listPesagemEntradaAnimaisOptions(): Promise<PesagemEntrada
   };
 }
 
-async function loadContratosOptions(pool: Pool) {
+async function loadContratosOptions(
+  pool: Pool,
+  filters: { search?: string | null; limit?: number | null } = {},
+) {
   if (!(await hasTable(pool, "contrato.contrato"))) return [];
+  const search = filters.search?.trim() ? filters.search.trim() : null;
+  const parsedLimit = Number(filters.limit);
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.trunc(parsedLimit), 20), 300) : 120;
   const result = await pool.query(
     `
     SELECT id, coalesce(numero::text, '') AS numero, coalesce(descricao, '') AS descricao
     FROM contrato.contrato
-    WHERE lower(coalesce(tp_contrato, '')) = 'entrada_animais'
+    WHERE lower(trim(coalesce(status, ''))) = 'ativo'
+      AND ${CONTRATO_TIPO_NORMALIZED_SQL} IN ('entrada_animais', 'saida_animais', 'animais')
+      AND (
+        $1::text IS NULL
+        OR id::text ILIKE '%' || $1 || '%'
+        OR coalesce(numero::text, '') ILIKE '%' || $1 || '%'
+        OR coalesce(descricao, '') ILIKE '%' || $1 || '%'
+      )
     ORDER BY id DESC
-    LIMIT 500
+    LIMIT $2
     `,
+    [search, limit],
   );
   return result.rows.map((row) => ({
     id: toNumber(row.id),
@@ -456,6 +477,7 @@ async function upsertFechamento(client: PoolClient, pesagemId: number, fechament
       pesagem_id,
       tabela_frete,
       calculo_frete,
+      periodo_producao_agricola,
       unidade_medida_frete,
       vl_unitario_frete,
       vl_combustivel,
@@ -477,11 +499,12 @@ async function upsertFechamento(client: PoolClient, pesagemId: number, fechament
       updated_on
     )
     VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now(),now()
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,now(),now()
     )
     ON CONFLICT (pesagem_id) DO UPDATE SET
       tabela_frete = EXCLUDED.tabela_frete,
       calculo_frete = EXCLUDED.calculo_frete,
+      periodo_producao_agricola = EXCLUDED.periodo_producao_agricola,
       unidade_medida_frete = EXCLUDED.unidade_medida_frete,
       vl_unitario_frete = EXCLUDED.vl_unitario_frete,
       vl_combustivel = EXCLUDED.vl_combustivel,
@@ -505,6 +528,7 @@ async function upsertFechamento(client: PoolClient, pesagemId: number, fechament
       pesagemId,
       normalizeText(fechamento.tabelaFrete),
       normalizeText(fechamento.calculoFrete),
+      normalizeText(fechamento.periodoProducaoAgricola),
       normalizeText(fechamento.unidadeMedidaFrete),
       toDecimal(fechamento.valorUnitarioFrete),
       toDecimal(fechamento.valorCombustivel),
@@ -603,6 +627,7 @@ async function ensurePesagemSchema(pool: Pool) {
         pesagem_id BIGINT PRIMARY KEY REFERENCES ${PESAGEM_TABLE}(id) ON DELETE CASCADE,
         tabela_frete VARCHAR(64) NULL,
         calculo_frete VARCHAR(64) NULL,
+        periodo_producao_agricola VARCHAR(128) NULL,
         unidade_medida_frete VARCHAR(64) NULL,
         vl_unitario_frete NUMERIC(29, 6) NOT NULL DEFAULT 0,
         vl_combustivel NUMERIC(29, 6) NOT NULL DEFAULT 0,
@@ -624,6 +649,7 @@ async function ensurePesagemSchema(pool: Pool) {
         updated_on TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    await client.query(`ALTER TABLE ${FECHAMENTO_TABLE} ADD COLUMN IF NOT EXISTS periodo_producao_agricola VARCHAR(128) NULL`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_tipo_status_id ON ${PESAGEM_TABLE}(tipo, status, id DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_pesagem_veiculo_numero ON ${PESAGEM_TABLE}(numero)`);
     await client.query("COMMIT");
@@ -641,6 +667,7 @@ function mapFechamentoRow(row: Record<string, unknown> | undefined): PesagemFech
     return {
       tabelaFrete: null,
       calculoFrete: null,
+      periodoProducaoAgricola: null,
       unidadeMedidaFrete: null,
       valorUnitarioFrete: 0,
       valorCombustivel: 0,
@@ -664,6 +691,7 @@ function mapFechamentoRow(row: Record<string, unknown> | undefined): PesagemFech
   return {
     tabelaFrete: toNullableString(row.tabela_frete),
     calculoFrete: toNullableString(row.calculo_frete),
+    periodoProducaoAgricola: toNullableString(row.periodo_producao_agricola),
     unidadeMedidaFrete: toNullableString(row.unidade_medida_frete),
     valorUnitarioFrete: toDecimal(row.vl_unitario_frete),
     valorCombustivel: toDecimal(row.vl_combustivel),
@@ -786,3 +814,4 @@ function toNullableInteger(value: unknown): number | null {
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) ? parsed : null;
 }
+

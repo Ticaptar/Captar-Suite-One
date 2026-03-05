@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
+import { LegacyTableSkeleton } from "@/components/legacy-skeleton";
 import { ModuleHeader } from "@/components/module-header";
 import type { VisitaListItem, VisitaStatus } from "@/lib/types/visita";
 
@@ -16,8 +17,8 @@ type ListResponse = {
 const statusOptions: Array<{ value: ""; label: string } | { value: VisitaStatus; label: string }> = [
   { value: "", label: "Todos os status" },
   { value: "oportunidade", label: "Oportunidade" },
-  { value: "em_analise", label: "Em analise" },
-  { value: "negociacao", label: "Negociacao" },
+  { value: "em_analise", label: "Em análise" },
+  { value: "negociacao", label: "Negociação" },
   { value: "contrato_gerado", label: "Contrato gerado" },
   { value: "perdida", label: "Perdida" },
   { value: "arquivada", label: "Arquivada" },
@@ -89,9 +90,9 @@ export default function VisitasListPage() {
       <main className="w-full space-y-2">
         <FormPageHeader
           title="Visitas"
-          subtitle="Pre-contrato para registrar leads, oportunidades e gerar contrato."
+          subtitle="Pré-contrato para registrar leads, oportunidades e gerar contrato."
           backHref="/"
-          backLabel="Inicio"
+          backLabel="Início"
         />
         <ModuleHeader />
 
@@ -162,17 +163,13 @@ export default function VisitasListPage() {
                   <th>Data Visita</th>
                   <th>Parceiro</th>
                   <th>Responsavel</th>
-                  <th>Endereco</th>
+                  <th>Endereço</th>
                   <th>Rebanho Atual</th>
-                  <th>Acoes</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && (
-                  <tr>
-                    <td colSpan={8} className="legacy-empty">Carregando visitas...</td>
-                  </tr>
-                )}
+                {loading && <LegacyTableSkeleton columns={8} rows={8} />}
                 {!loading && items.length === 0 && (
                   <tr>
                     <td colSpan={8} className="legacy-empty">Nenhuma visita encontrada.</td>
@@ -228,9 +225,9 @@ function statusLabel(status: VisitaStatus): string {
     case "oportunidade":
       return "Oportunidade";
     case "em_analise":
-      return "Em analise";
+      return "Em análise";
     case "negociacao":
-      return "Negociacao";
+      return "Negociação";
     case "contrato_gerado":
       return "Contrato gerado";
     case "perdida":

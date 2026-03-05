@@ -1486,10 +1486,15 @@ export default function NovoContratoEntradaAnimaisPage() {
     setModalType("clausula");
   }
 
-  async function handleSaveContract(options?: { gerarPdf?: boolean }) {
+  async function handleSaveContract(options?: { gerarPdf?: boolean; silent?: boolean }): Promise<number | null> {
     setError("");
-    setSuccess("");
-    if (!form.empresaId) return setError("Selecione a empresa/filial.");
+    if (!options?.silent) {
+      setSuccess("");
+    }
+    if (!form.empresaId) {
+      setError("Selecione a empresa/filial.");
+      return null;
+    }
     const empresaSelecionadaBase = empresas.find((item) => String(item.id) === form.empresaId);
     let empresaSelecionada = empresaSelecionadaBase;
     let empresaId = toOptionalInt(form.empresaId);
@@ -1524,7 +1529,10 @@ export default function NovoContratoEntradaAnimaisPage() {
       };
     }
 
-    if (!form.parceiroId) return setError("Selecione o parceiro (PN) para continuar.");
+    if (!form.parceiroId) {
+      setError("Selecione o parceiro (PN) para continuar.");
+      return null;
+    }
     const parceiroSelecionadoBase = parceiros.find((item) => String(item.id) === form.parceiroId);
     let parceiroSelecionado = parceiroSelecionadoBase;
     let parceiroId = toOptionalInt(form.parceiroId);
@@ -1559,7 +1567,10 @@ export default function NovoContratoEntradaAnimaisPage() {
       };
     }
 
-    if (!parceiroId && !parceiroSap?.nome) return setError("Selecione o parceiro (PN) para continuar.");
+    if (!parceiroId && !parceiroSap?.nome) {
+      setError("Selecione o parceiro (PN) para continuar.");
+      return null;
+    }
 
     const comissionadoSelecionadoBase = parceiros.find((item) => String(item.id) === form.comissionadoId);
     let comissionadoSelecionado = comissionadoSelecionadoBase;
@@ -1596,8 +1607,14 @@ export default function NovoContratoEntradaAnimaisPage() {
       };
     }
 
-    if (!isEditMode && !toOptionalInt(form.numero)) return setError("Informe o número do contrato.");
-    if (!form.referenciaContrato.trim()) return setError("Referência do contrato é obrigatória.");
+    if (!isEditMode && !toOptionalInt(form.numero)) {
+      setError("Informe o número do contrato.");
+      return null;
+    }
+    if (!form.referenciaContrato.trim()) {
+      setError("Referência do contrato é obrigatória.");
+      return null;
+    }
     const currentContratoId = isEditMode && editingContratoId ? editingContratoId : savedContratoId;
     const method = currentContratoId ? "PATCH" : "POST";
     const endpoint = currentContratoId
@@ -1666,34 +1683,47 @@ export default function NovoContratoEntradaAnimaisPage() {
       if (contratoId) {
         setSavedContratoId(contratoId);
         setCurrentStatus(normalizeStatusValue(asText(result?.contrato?.status) || currentStatus));
-        setSuccess(method === "POST" ? `Contrato #${contratoId} salvo com sucesso.` : `Contrato #${contratoId} atualizado com sucesso.`);
+        if (!options?.silent) {
+          setSuccess(method === "POST" ? `Contrato #${contratoId} salvo com sucesso.` : `Contrato #${contratoId} atualizado com sucesso.`);
+        }
         router.replace(`/contratos/entrada-animais/novo?id=${contratoId}`);
         if (options?.gerarPdf) {
           window.open(`/api/contratos/entrada-animais/${contratoId}/pdf`, "_blank", "noopener,noreferrer");
-          return;
+          return contratoId;
         }
-        return;
+        return contratoId;
       }
       router.push("/contratos/entrada-animais");
+      return null;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Erro inesperado ao salvar.");
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
   async function handleChangeStatus(nextStatus: ContratoStatus, options?: { gerarPedido?: boolean }) {
-    const contratoId = savedContratoId ?? editingContratoId ?? null;
+    const shouldGenerate = options?.gerarPedido === true;
+    setError("");
+    setSuccess("");
+
+    let contratoId = savedContratoId ?? editingContratoId ?? null;
+    if (shouldGenerate) {
+      const persistedContratoId = await handleSaveContract({ silent: true });
+      if (!persistedContratoId || Number.isNaN(persistedContratoId)) {
+        return;
+      }
+      contratoId = persistedContratoId;
+    }
+
     if (!contratoId || Number.isNaN(contratoId)) {
       setError("Salve o contrato antes de atualizar o status.");
       return;
     }
 
-    setError("");
-    setSuccess("");
     setStatusUpdating(true);
     try {
-      const shouldGenerate = options?.gerarPedido === true;
       const response = await fetch(`/api/contratos/entrada-animais/${contratoId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1782,9 +1812,9 @@ export default function NovoContratoEntradaAnimaisPage() {
               type="button"
               className="legacy-btn"
               onClick={() => handleChangeStatus("ativo", { gerarPedido: true })}
-              disabled={saving || statusUpdating || loadingContrato}
+              disabled={saving || statusUpdating || loadingContrato || currentStatus === "ativo"}
             >
-              {statusUpdating ? "Atualizando..." : "Aprovar/Gerar Pedido"}
+              {statusUpdating ? "Atualizando..." : currentStatus === "ativo" ? "Pedido ja gerado" : "Aprovar/Gerar Pedido"}
             </button>
           </div>
           {loadingContrato && <p className="legacy-message">Carregando contrato...</p>}
@@ -3062,6 +3092,32 @@ function ClausulasTab({
   onEditar: (index: number) => void;
   onRemove: (index: number) => void;
 }) {
+  const [selecionadas, setSelecionadas] = useState<number[]>([]);
+  const selecionadasAtivas = selecionadas.filter((index) => index >= 0 && index < rows.length);
+  const todosSelecionados = rows.length > 0 && selecionadasAtivas.length === rows.length;
+
+  function toggleClausula(index: number) {
+    setSelecionadas((prev) => {
+      const active = prev.filter((item) => item >= 0 && item < rows.length);
+      return active.includes(index) ? active.filter((item) => item !== index) : [...active, index];
+    });
+  }
+
+  function toggleTodasClausulas(checked: boolean) {
+    if (!checked) {
+      setSelecionadas([]);
+      return;
+    }
+    setSelecionadas(rows.map((_, index) => index));
+  }
+
+  function removerSelecionadas() {
+    if (selecionadasAtivas.length === 0) return;
+    const ordered = [...selecionadasAtivas].sort((a, b) => b - a);
+    ordered.forEach((index) => onRemove(index));
+    setSelecionadas([]);
+  }
+
   return (
     <section className="mt-2">
       <div className="legacy-grid cols-4">
@@ -3093,13 +3149,14 @@ function ClausulasTab({
       <div className="legacy-actions mt-2">
         <button type="button" className="legacy-btn itens-add-btn" onClick={() => void onAdicionar()}>Aplicar Modelo</button>
         <button type="button" className="legacy-btn itens-add-btn" onClick={onNova}>Nova Cláusula</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={removerSelecionadas} disabled={selecionadasAtivas.length === 0}>Remover selecionadas</button>
       </div>
       <div className="itens-table-wrap mt-2">
         <table className="itens-table">
           <thead>
             <tr>
               <th style={{ width: "36px" }}>
-                <input type="checkbox" disabled />
+                <input type="checkbox" checked={todosSelecionados} onChange={(event) => toggleTodasClausulas(event.target.checked)} disabled={rows.length === 0} />
               </th>
               <th>Código</th>
               <th>Referência</th>
@@ -3116,14 +3173,17 @@ function ClausulasTab({
             {rows.map((row, index) => (
               <tr key={`${row.codigo ?? "cl"}-${row.referencia ?? "ref"}-${index}`}>
                 <td>
-                  <input type="checkbox" disabled />
+                  <input type="checkbox" checked={selecionadasAtivas.includes(index)} onChange={() => toggleClausula(index)} />
                 </td>
                 <td>{row.codigo || "-"}</td>
                 <td className="left">{row.referencia || "-"}</td>
                 <td className="left">{row.descricao || "-"}</td>
                 <td>
                   <button type="button" className="legacy-btn mr-1" onClick={() => onEditar(index)}>Editar</button>
-                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                  <button type="button" className="legacy-btn" onClick={() => {
+                    onRemove(index);
+                    setSelecionadas((prev) => prev.filter((item) => item !== index).map((item) => (item > index ? item - 1 : item)));
+                  }}>Remover</button>
                 </td>
               </tr>
             ))}

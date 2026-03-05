@@ -2,6 +2,7 @@ import { getPgPool } from "@/lib/db";
 import {
   createPurchaseOrderInSap,
   getBusinessPartnerProfileFromSap,
+  listBranchesFromSap,
   type SapPurchaseOrderCreateResult,
 } from "@/lib/sap-service-layer";
 
@@ -34,6 +35,7 @@ type ParsedItemLine = {
   warehouseCode: string | null;
   costingCode: string | null;
   distributionRule: string | null;
+  distributionDimension: number | null;
   usage: string | null;
   taxCode: string | null;
   shipDate: string | null;
@@ -183,6 +185,12 @@ function extractCodeFromCatalogLabel(value: unknown): string | null {
   return parsed;
 }
 
+function parseDistributionDimension(value: unknown): number | null {
+  const parsed = toInteger(value);
+  if (parsed === null) return null;
+  return parsed >= 1 && parsed <= 5 ? parsed : null;
+}
+
 function extractLeadingInteger(value: unknown): number | null {
   const parsed = toNullableString(value);
   if (!parsed) return null;
@@ -192,12 +200,61 @@ function extractLeadingInteger(value: unknown): number | null {
   return Number.isNaN(result) ? null : result;
 }
 
+function normalizeCode(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeName(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function codesMatch(a: unknown, b: unknown): boolean {
+  const left = normalizeCode(a);
+  const right = normalizeCode(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  const digitsA = left.replace(/\D/g, "");
+  const digitsB = right.replace(/\D/g, "");
+  if (digitsA && digitsB && (digitsA.endsWith(digitsB) || digitsB.endsWith(digitsA))) {
+    return true;
+  }
+
+  return false;
+}
+
+function namesMatch(a: unknown, b: unknown): boolean {
+  const left = normalizeName(a);
+  const right = normalizeName(b);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.includes(right) || right.includes(left);
+}
+
 function parseItems(rows: JsonRow[], prazoEntregaContrato: string | null, tipoContrato: string): ParsedItemLine[] {
   const lines: ParsedItemLine[] = [];
   const isEntradaAnimais = tipoContrato === "entrada_animais";
-  const defaultUsage = isEntradaAnimais ? toNullableString(process.env.SAP_SL_DEFAULT_USAGE_ENTRADA_GADO) ?? "GADO COMPRA" : null;
+  const defaultUsageLabel = isEntradaAnimais ? toNullableString(process.env.SAP_SL_DEFAULT_USAGE_ENTRADA_GADO) ?? "GADO COMPRA" : null;
+  const defaultUsageCodeRaw = isEntradaAnimais ? toNullableString(process.env.SAP_SL_DEFAULT_USAGE_CODE_ENTRADA_GADO) : null;
+  const defaultUsageCode =
+    isEntradaAnimais && defaultUsageCodeRaw && /^\d+$/.test(defaultUsageCodeRaw) ? defaultUsageCodeRaw : "3";
+  const defaultUsage =
+    isEntradaAnimais && defaultUsageLabel
+      ? `${defaultUsageCode} - ${defaultUsageLabel}`
+      : isEntradaAnimais
+        ? defaultUsageCode
+        : null;
   const defaultTaxCode = isEntradaAnimais ? toNullableString(process.env.SAP_SL_DEFAULT_TAX_CODE_ENTRADA_GADO) ?? "1102-001" : null;
-  const defaultDistributionRule = isEntradaAnimais ? toNullableString(process.env.SAP_SL_DEFAULT_DISTR_RULE_ENTRADA_GADO) : null;
+  const defaultDistributionRule = isEntradaAnimais
+    ? toNullableString(process.env.SAP_SL_DEFAULT_DISTR_RULE_ENTRADA_GADO) ?? "2;2.01;2.01.01"
+    : null;
 
   for (const row of rows) {
     const itemCode =
@@ -210,22 +267,31 @@ function parseItems(rows: JsonRow[], prazoEntregaContrato: string | null, tipoCo
     const quantity = toNumber(row.quantidade ?? row.qtd ?? row.qt);
     if (!itemCode || quantity === null || quantity <= 0) continue;
 
-    const distributionRule =
-      extractCodeFromCatalogLabel(
-        row.regraDistribuicao ??
-          row.distributionRule ??
-          row.centroCusto ??
-          row.centro_custo ??
-          row.centroCustoLabel ??
-          row.centro_custo_label_snapshot,
-      ) ?? defaultDistributionRule;
+    const distributionRuleRaw = isEntradaAnimais
+      ? defaultDistributionRule
+      : row.regraDistribuicao ??
+        row.distributionRule ??
+        row.centroCusto ??
+        row.centro_custo ??
+        row.centroCustoLabel ??
+        row.centro_custo_label_snapshot;
 
-    const usage =
-      toNullableString(row.utilizacao) ??
-      toNullableString(row.usage) ??
-      toNullableString(row.usoPrincipal) ??
-      toNullableString(row.uso_principal) ??
-      defaultUsage;
+    const distributionRule = extractCodeFromCatalogLabel(distributionRuleRaw) ?? defaultDistributionRule;
+    const distributionDimension =
+      parseDistributionDimension(row.distributionDimension) ??
+      parseDistributionDimension(row.distribution_dimension) ??
+      parseDistributionDimension(row.centroCustoDimension) ??
+      parseDistributionDimension(row.centro_custo_dimension) ??
+      parseDistributionDimension(row.inWhichDimension) ??
+      parseDistributionDimension(row.in_which_dimension);
+
+    const usage = isEntradaAnimais
+      ? defaultUsage
+      : toNullableString(row.utilizacao) ??
+        toNullableString(row.usage) ??
+        toNullableString(row.usoPrincipal) ??
+        toNullableString(row.uso_principal) ??
+        defaultUsage;
 
     const taxCode =
       extractCodeFromCatalogLabel(
@@ -244,6 +310,7 @@ function parseItems(rows: JsonRow[], prazoEntregaContrato: string | null, tipoCo
       warehouseCode: extractCodeFromCatalogLabel(row.deposito ?? row.depositoLabel ?? row.deposito_label_snapshot),
       costingCode: distributionRule,
       distributionRule,
+      distributionDimension,
       usage,
       taxCode,
       shipDate: normalizeDate(row.prazoEntrega ?? row.prazo_entrega) ?? prazoEntregaContrato,
@@ -388,10 +455,59 @@ async function resolvePedidoCardCode(contrato: JsonRow, metadata: JsonRow | null
   return resolveParceiroCardCode(contrato, metadata);
 }
 
+async function resolveBplIdFromContrato(contrato: JsonRow, metadata: JsonRow | null): Promise<number | null> {
+  const empresaSap =
+    metadata?.empresaSap && typeof metadata.empresaSap === "object" && !Array.isArray(metadata.empresaSap)
+      ? (metadata.empresaSap as JsonRow)
+      : null;
+
+  const fromDirectReferences = [
+    extractLeadingInteger(empresaSap?.sapExternalId),
+    extractLeadingInteger(empresaSap?.codigo),
+    extractLeadingInteger(contrato.empresa_bpl_id),
+    extractLeadingInteger(contrato.bpl_id),
+  ].find((value): value is number => Boolean(value && value > 0));
+  if (fromDirectReferences) return fromDirectReferences;
+
+  const codeReferences = uniqueStrings([
+    toNullableString(empresaSap?.codigo),
+    toNullableString(contrato.empresa_codigo),
+    toNullableString(contrato.empresa_codigo_snapshot),
+  ]);
+  const nameReferences = uniqueStrings([
+    toNullableString(empresaSap?.nome),
+    toNullableString(contrato.empresa_nome),
+    toNullableString(contrato.empresa_nome_snapshot),
+  ]);
+  const cnpjReferences = uniqueStrings([
+    normalizeDocument(empresaSap?.cnpj),
+    normalizeDocument(contrato.empresa_cnpj),
+    normalizeDocument(contrato.empresa_cnpj_snapshot),
+  ]);
+
+  const branches = await listBranchesFromSap();
+  for (const branch of branches) {
+    const bplId = extractLeadingInteger(branch.externalId);
+    if (!bplId || bplId <= 0) continue;
+
+    if (cnpjReferences.some((cnpj) => cnpj && cnpj === normalizeDocument(branch.cnpj))) {
+      return bplId;
+    }
+    if (codeReferences.some((code) => code && codesMatch(code, branch.code))) {
+      return bplId;
+    }
+    if (nameReferences.some((name) => name && namesMatch(name, branch.name))) {
+      return bplId;
+    }
+  }
+
+  return null;
+}
+
 function parseFinanceInfo(data: ContratoSapSource): ParsedFinanceInfo {
   const rowsA = Array.isArray(data.financeiro) ? data.financeiro : [];
   const rowsB = Array.isArray(data.financeiros) ? data.financeiros : [];
-  const rows = [...rowsA, ...rowsB];
+  const rows = [...rowsA, ...rowsB].reverse();
 
   for (const row of rows) {
     const condicaoLabel = firstNonEmpty([row.condicaoPagamento, row.condicao, row.paymentTerm]);
@@ -447,6 +563,7 @@ export async function gerarPedidoCompraSapPorContrato(data: ContratoSapSource): 
 
   const metadata = parseMetadataFromObservation(contrato.observacao);
   const cardCode = await resolvePedidoCardCode(contrato, metadata);
+  const bplId = await resolveBplIdFromContrato(contrato, metadata);
 
   const docDate = normalizeDate(contrato.dt_assinatura) ?? normalizeDate(contrato.dt_inicio) ?? new Date().toISOString().slice(0, 10);
   const docDueDate = normalizeDate(contrato.prazo_entrega) ?? normalizeDate(contrato.dt_vencimento) ?? docDate;
@@ -498,6 +615,7 @@ export async function gerarPedidoCompraSapPorContrato(data: ContratoSapSource): 
     taxDate,
     numAtCard,
     comments,
+    bplId,
     paymentGroupCode,
     paymentMethod,
     lines,

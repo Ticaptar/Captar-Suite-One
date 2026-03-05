@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import {
   createPesagemEntradaAnimais,
   listPesagensEntradaAnimais,
@@ -57,6 +57,26 @@ export async function POST(request: Request) {
   const pesoBruto = parseOptionalNumber(body.pesoBruto);
   const pesoTara = parseOptionalNumber(body.pesoTara);
   const operacaoInformada = toOptionalNullableString(body.operacao);
+  const dataChegada = toOptionalNullableString(body.dataChegada);
+  const horaChegada = toOptionalNullableString(body.horaChegada);
+  const dataSaida = toOptionalNullableString(body.dataSaida);
+  const horaSaida = toOptionalNullableString(body.horaSaida);
+  const dataInicio = toOptionalNullableString(body.dataInicio);
+  const dataFim = toOptionalNullableString(body.dataFim);
+
+  const validationError = validatePesagemForm({
+    pesoBruto,
+    pesoTara,
+    dataChegada,
+    horaChegada,
+    dataSaida,
+    horaSaida,
+    dataInicio,
+    dataFim,
+  });
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
 
   let fluxo: { status: PesagemStatus; operacao: string };
   try {
@@ -76,30 +96,30 @@ export async function POST(request: Request) {
       status: fluxo.status,
       tipo: "entrada_animais",
       numeroTicket: toOptionalNullableString(body.numeroTicket),
-      contratoId: parseOptionalNullablePositiveInt(body.contratoId),
+      contratoId: parseOptionalNullableNonZeroInt(body.contratoId),
       contratoReferencia: toOptionalNullableString(body.contratoReferencia),
-      itemId: parseOptionalNullablePositiveInt(body.itemId),
+      itemId: parseOptionalNullableNonZeroInt(body.itemId),
       itemDescricao: toOptionalNullableString(body.itemDescricao),
-      fazendaId: parseOptionalNullablePositiveInt(body.fazendaId),
+      fazendaId: parseOptionalNullableNonZeroInt(body.fazendaId),
       fazendaNome: toOptionalNullableString(body.fazendaNome),
       tipoFrete: toOptionalNullableString(body.tipoFrete),
       responsavelFrete: toOptionalNullableString(body.responsavelFrete),
-      transportadorId: parseOptionalNullablePositiveInt(body.transportadorId),
+      transportadorId: parseOptionalNullableNonZeroInt(body.transportadorId),
       transportadorNome: toOptionalNullableString(body.transportadorNome),
-      contratanteId: parseOptionalNullablePositiveInt(body.contratanteId),
+      contratanteId: parseOptionalNullableNonZeroInt(body.contratanteId),
       contratanteNome: toOptionalNullableString(body.contratanteNome),
-      motoristaId: parseOptionalNullablePositiveInt(body.motoristaId),
+      motoristaId: parseOptionalNullableNonZeroInt(body.motoristaId),
       motoristaNome: toOptionalNullableString(body.motoristaNome),
-      dataChegada: toOptionalNullableString(body.dataChegada),
-      horaChegada: toOptionalNullableString(body.horaChegada),
-      dataSaida: toOptionalNullableString(body.dataSaida),
-      horaSaida: toOptionalNullableString(body.horaSaida),
+      dataChegada,
+      horaChegada,
+      dataSaida,
+      horaSaida,
       placa: toOptionalNullableString(body.placa),
-      equipamentoId: parseOptionalNullablePositiveInt(body.equipamentoId),
+      equipamentoId: parseOptionalNullableNonZeroInt(body.equipamentoId),
       equipamentoNome: toOptionalNullableString(body.equipamentoNome),
       viagem: toOptionalNullableString(body.viagem),
-      dataInicio: toOptionalNullableString(body.dataInicio),
-      dataFim: toOptionalNullableString(body.dataFim),
+      dataInicio,
+      dataFim,
       kmInicial: parseOptionalNumber(body.kmInicial),
       kmFinal: parseOptionalNumber(body.kmFinal),
       kmTotal: parseOptionalNumber(body.kmTotal),
@@ -129,10 +149,10 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return parsed;
 }
 
-function parseOptionalNullablePositiveInt(value: unknown): number | null {
+function parseOptionalNullableNonZeroInt(value: unknown): number | null {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  if (!Number.isFinite(parsed) || parsed === 0) return null;
   return parsed;
 }
 
@@ -220,6 +240,7 @@ function parseFechamento(value: unknown) {
   return {
     tabelaFrete: toOptionalNullableString(row.tabelaFrete),
     calculoFrete: toOptionalNullableString(row.calculoFrete),
+    periodoProducaoAgricola: toOptionalNullableString(row.periodoProducaoAgricola),
     unidadeMedidaFrete: toOptionalNullableString(row.unidadeMedidaFrete),
     valorUnitarioFrete: parseOptionalNumber(row.valorUnitarioFrete) ?? 0,
     valorCombustivel: parseOptionalNumber(row.valorCombustivel) ?? 0,
@@ -244,6 +265,54 @@ function parseOptionalInteger(value: unknown): number | null {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function validatePesagemForm(args: {
+  pesoBruto: number | null;
+  pesoTara: number | null;
+  dataChegada: string | null;
+  horaChegada: string | null;
+  dataSaida: string | null;
+  horaSaida: string | null;
+  dataInicio: string | null;
+  dataFim: string | null;
+}): string | null {
+  const pesoBruto = Math.max(0, Number(args.pesoBruto ?? 0));
+  const pesoTara = Math.max(0, Number(args.pesoTara ?? 0));
+
+  if (pesoBruto > 0 && pesoTara > pesoBruto) {
+    return "Peso tara nao pode ser maior que peso bruto.";
+  }
+
+  const chegada = combineDateTime(args.dataChegada, args.horaChegada);
+  const saida = combineDateTime(args.dataSaida, args.horaSaida);
+  if (chegada && saida && saida.getTime() < chegada.getTime()) {
+    return "Data/Hora de saida nao pode ser anterior a Data/Hora de chegada.";
+  }
+
+  const inicio = parseDateOnly(args.dataInicio);
+  const fim = parseDateOnly(args.dataFim);
+  if (inicio && fim && fim.getTime() < inicio.getTime()) {
+    return "Data fim nao pode ser anterior a data inicio.";
+  }
+
+  return null;
+}
+
+function parseDateOnly(value: string | null): Date | null {
+  const text = String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const parsed = new Date(`${text}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function combineDateTime(dateValue: string | null, timeValue: string | null): Date | null {
+  const dateText = String(dateValue ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) return null;
+  const timeText = String(timeValue ?? "").trim();
+  const normalizedTime = /^\d{2}:\d{2}$/.test(timeText) ? `${timeText}:00` : "00:00:00";
+  const parsed = new Date(`${dateText}T${normalizedTime}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function resolveFluxoPesagem(args: {
@@ -294,3 +363,5 @@ function toBoolean(value: unknown): boolean {
   const normalized = String(value ?? "").toLowerCase().trim();
   return normalized === "true" || normalized === "1" || normalized === "sim";
 }
+
+

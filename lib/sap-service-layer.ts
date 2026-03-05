@@ -78,6 +78,7 @@ export type SapPurchaseOrderLineInput = {
   warehouseCode?: string | null;
   costingCode?: string | null;
   distributionRule?: string | null;
+  distributionDimension?: number | null;
   usage?: string | number | null;
   taxCode?: string | null;
   shipDate?: string | null;
@@ -116,6 +117,8 @@ let partnersPromise: Promise<SapBusinessPartner[]> | null = null;
 
 let branchesCache: TimedCache<SapBranch[]> | null = null;
 let branchesPromise: Promise<SapBranch[]> | null = null;
+let profitCentersDimensionCache: TimedCache<Map<string, number>> | null = null;
+let profitCentersDimensionPromise: Promise<Map<string, number>> | null = null;
 
 function readEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -337,10 +340,13 @@ function parseUsageValue(value: unknown): { numeric: number | null; text: string
     return { numeric: numericDirect, text: null };
   }
 
-  const prefix = raw.split(" - ")[0]?.trim() ?? "";
+  const separator = " - ";
+  const separatorIndex = raw.indexOf(separator);
+  const prefix = raw.split(separator)[0]?.trim() ?? "";
   const numericPrefix = toSapNumber(prefix);
   if (numericPrefix !== null) {
-    return { numeric: numericPrefix, text: raw };
+    const suffix = separatorIndex > -1 ? raw.slice(separatorIndex + separator.length).trim() : "";
+    return { numeric: numericPrefix, text: suffix || raw };
   }
 
   return { numeric: null, text: raw };
@@ -351,6 +357,310 @@ function isPostingDateRangeError(message: string): boolean {
   return normalized.includes("posting date deviates from the defined range");
 }
 
+function isWarehouseBranchMismatchError(message: string): boolean {
+  const normalized = normalizeText(message).toLowerCase();
+  return normalized.includes("warehouse is not assigned to the same branch as the document");
+}
+
+function isPaymentMethodBranchMismatchError(message: string): boolean {
+  const normalized = normalizeLooseText(message);
+
+  const ptBrMatch =
+    normalized.includes("filial") &&
+    normalized.includes("forma de pagamento") &&
+    normalized.includes("diferente");
+  if (ptBrMatch) return true;
+
+  const enMatch =
+    normalized.includes("branch") &&
+    normalized.includes("payment method") &&
+    normalized.includes("different");
+  return enMatch;
+}
+
+function isInvalidLinkedPaymentMethodError(message: string): boolean {
+  const normalized = normalizeLooseText(message);
+  const enMatch =
+    normalized.includes("linked payment method") &&
+    (normalized.includes("inactive") || normalized.includes("no longer linked with business partner"));
+  if (enMatch) return true;
+
+  const ptBrMatch =
+    normalized.includes("forma de pagamento") &&
+    (normalized.includes("inativ") || normalized.includes("nao") || normalized.includes("não")) &&
+    normalized.includes("vincul");
+  return ptBrMatch;
+}
+
+function normalizeDistributionRuleRaw(value: unknown): string | null {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+
+  const withoutPrefix = raw.replace(/^sap:[^:]+:/i, "").trim();
+  if (!withoutPrefix) return null;
+
+  const separatorIndex = withoutPrefix.indexOf(" - ");
+  const withoutLabel = separatorIndex > 0 ? withoutPrefix.slice(0, separatorIndex).trim() : withoutPrefix;
+  return withoutLabel || null;
+}
+
+function extractDistributionRuleHierarchy(value: unknown): string[] {
+  const withoutLabel = normalizeDistributionRuleRaw(value);
+  if (!withoutLabel) return [];
+
+  const hierarchyTokens = withoutLabel
+    .split(";")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+  if (hierarchyTokens.length > 1) return hierarchyTokens;
+
+  const singleCode = hierarchyTokens[0] ?? withoutLabel;
+  if (!singleCode) return [];
+
+  // Regras como "2.01.01" devem preencher tambem os niveis anteriores.
+  if (/^\d+(?:\.\d+)+$/.test(singleCode)) {
+    const parts = singleCode.split(".");
+    const expanded: string[] = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      expanded.push(parts.slice(0, index + 1).join("."));
+    }
+    return expanded;
+  }
+
+  return [singleCode];
+}
+
+function extractDistributionRuleCode(value: unknown): string | null {
+  const hierarchy = extractDistributionRuleHierarchy(value);
+  if (hierarchy.length === 0) return null;
+  return hierarchy[hierarchy.length - 1] ?? null;
+}
+
+function toSapDimension(value: unknown): number | null {
+  const numeric = toSapNumber(value);
+  if (numeric === null) return null;
+  const dimension = Math.trunc(numeric);
+  return dimension >= 1 && dimension <= 5 ? dimension : null;
+}
+
+function normalizeLooseText(value: string): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function getCostingCodeFieldName(dimension: number): string {
+  return dimension <= 1 ? "CostingCode" : `CostingCode${dimension}`;
+}
+
+function applyCostingCodeByDimension(
+  mapped: Record<string, unknown>,
+  distributionCode: string,
+  dimension: number | null,
+) {
+  if (!distributionCode) return;
+
+  mapped[getCostingCodeFieldName(dimension ?? 1)] = distributionCode;
+}
+
+type DistributionRuleDimensionError = {
+  distributionCode: string;
+  currentDimension: number | null;
+};
+
+function parseDistributionRuleDimensionError(message: string): DistributionRuleDimensionError | null {
+  const normalized = normalizeText(message);
+  if (!normalized) return null;
+
+  const match = normalized.match(/distribution rule\s+([^\s]+)\s+is not related to dimension\s+(\d+)/i);
+  if (!match?.[1]) return null;
+
+  const distributionCode = normalizeText(match[1]).replace(/^[\["'(]+|[\]"'),.;:!?]+$/g, "");
+  if (!distributionCode) return null;
+
+  return {
+    distributionCode,
+    currentDimension: toSapDimension(match[2]),
+  };
+}
+
+function isMissingDistributionRuleError(message: string): boolean {
+  const normalized = normalizeLooseText(message);
+  const referencesDistributionRule =
+    normalized.includes("regra de distribuicao") || normalized.includes("distribution rule");
+  if (!referencesDistributionRule) return false;
+
+  return (
+    normalized.includes("falta") ||
+    normalized.includes("preench") ||
+    normalized.includes("missing") ||
+    normalized.includes("required")
+  );
+}
+
+function remapDistributionRuleDimensionInLines(
+  lines: Record<string, unknown>[],
+  distributionCode: string,
+  targetDimension: number,
+): Record<string, unknown>[] {
+  const normalizedCode = normalizeText(distributionCode).toUpperCase();
+  if (!normalizedCode) return lines;
+
+  const targetField = getCostingCodeFieldName(targetDimension);
+
+  return lines.map((line) => {
+    const next = { ...line };
+    let matched = false;
+
+    for (let dimension = 1; dimension <= 5; dimension += 1) {
+      const field = getCostingCodeFieldName(dimension);
+      const currentValue = normalizeText(next[field]).toUpperCase();
+      if (currentValue && currentValue === normalizedCode) {
+        delete next[field];
+        matched = true;
+      }
+    }
+
+    if (matched) {
+      next[targetField] = distributionCode;
+    }
+
+    return next;
+  });
+}
+
+async function realignDistributionRulesInLines(
+  lines: Record<string, unknown>[],
+  cachedDimensions: Map<string, number> | null,
+  defaultDimension: number | null,
+): Promise<{ lines: Record<string, unknown>[]; changed: boolean }> {
+  const resolvedDimensionByCode = new Map<string, number | null>();
+  const realignedLines: Record<string, unknown>[] = [];
+  let changed = false;
+
+  for (const line of lines) {
+    let detectedCode: string | null = null;
+    let detectedDimension: number | null = null;
+
+    for (let dimension = 1; dimension <= 5; dimension += 1) {
+      const field = getCostingCodeFieldName(dimension);
+      const code = extractDistributionRuleCode(line[field]);
+      if (!code) continue;
+      detectedCode = code;
+      detectedDimension = dimension;
+      break;
+    }
+
+    if (!detectedCode) {
+      realignedLines.push(line);
+      continue;
+    }
+
+    const codeKey = detectedCode.toUpperCase();
+    let resolvedDimension = resolvedDimensionByCode.get(codeKey);
+    if (resolvedDimension === undefined) {
+      resolvedDimension = (await resolveProfitCenterDimensionByCode(detectedCode, cachedDimensions)) ?? defaultDimension;
+      resolvedDimensionByCode.set(codeKey, resolvedDimension);
+    }
+
+    if (resolvedDimension === null || resolvedDimension === detectedDimension) {
+      realignedLines.push(line);
+      continue;
+    }
+
+    const remapped = remapDistributionRuleDimensionInLines([line], detectedCode, resolvedDimension)[0] ?? line;
+    realignedLines.push(remapped);
+    changed = true;
+  }
+
+  return { lines: realignedLines, changed };
+}
+
+function stripWarehouseCodeFromLines(lines: Record<string, unknown>[]): Record<string, unknown>[] {
+  return lines.map((line) => {
+    const next = { ...line };
+    delete next.WarehouseCode;
+    return next;
+  });
+}
+
+async function listProfitCenterDimensionsFromSap(): Promise<Map<string, number>> {
+  if (!isSapServiceLayerConfigured()) {
+    return new Map<string, number>();
+  }
+
+  if (isCacheValid(profitCentersDimensionCache)) {
+    return profitCentersDimensionCache.value;
+  }
+
+  if (!profitCentersDimensionPromise) {
+    profitCentersDimensionPromise = (async () => {
+      const rows =
+        (await tryReadCollectionPaged("/ProfitCenters?$select=CenterCode,InWhichDimension,Active&$orderby=CenterCode&$top=1000", 6)) ??
+        [];
+
+      const mapped = new Map<string, number>();
+      for (const row of rows) {
+        const code = normalizeText(row.CenterCode ?? row.Code);
+        if (!code) continue;
+
+        const dimension = toSapDimension(row.InWhichDimension ?? row.Dimension);
+        if (dimension === null) continue;
+
+        mapped.set(code.toUpperCase(), dimension);
+      }
+
+      profitCentersDimensionCache = {
+        value: mapped,
+        expiresAt: Date.now() + CACHE_TTL_MS.contratoCatalog,
+      };
+
+      return mapped;
+    })().finally(() => {
+      profitCentersDimensionPromise = null;
+    });
+  }
+
+  return profitCentersDimensionPromise;
+}
+
+function escapeODataLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+async function resolveProfitCenterDimensionByCode(
+  distributionCode: string,
+  cachedDimensions?: Map<string, number> | null,
+): Promise<number | null> {
+  const code = normalizeText(distributionCode);
+  if (!code) return null;
+
+  const upperCode = code.toUpperCase();
+  const dimensions = cachedDimensions ?? (await listProfitCenterDimensionsFromSap());
+  const fromCache = dimensions.get(upperCode);
+  if (fromCache !== undefined) {
+    return fromCache;
+  }
+
+  const escaped = escapeODataLiteral(code);
+  const rows = await tryReadCollection(
+    `/ProfitCenters?$select=CenterCode,InWhichDimension,Active&$filter=CenterCode eq '${escaped}'&$top=1`,
+  );
+  const row = rows?.[0] ?? null;
+  const fromLookup = toSapDimension(row?.InWhichDimension ?? row?.Dimension);
+  if (fromLookup !== null) {
+    dimensions.set(upperCode, fromLookup);
+    profitCentersDimensionCache = {
+      value: dimensions,
+      expiresAt: Date.now() + CACHE_TTL_MS.contratoCatalog,
+    };
+  }
+
+  return fromLookup;
+}
+
 export async function createPurchaseOrderInSap(input: SapPurchaseOrderCreateInput): Promise<SapPurchaseOrderCreateResult> {
   if (!isSapServiceLayerConfigured()) {
     throw new Error("ConfiguraÃ§Ã£o SAP Service Layer ausente.");
@@ -359,6 +669,29 @@ export async function createPurchaseOrderInSap(input: SapPurchaseOrderCreateInpu
   const cardCode = normalizeText(input.cardCode);
   if (!cardCode) {
     throw new Error("CardCode do parceiro nao informado para o pedido SAP.");
+  }
+
+  const hasDistributionRules = input.lines.some((line) =>
+    Boolean(extractDistributionRuleCode(line.distributionRule ?? line.costingCode)),
+  );
+  const profitCenterDimensions = hasDistributionRules ? await listProfitCenterDimensionsFromSap() : null;
+  const defaultDistributionDimension = toSapDimension(process.env.SAP_SL_DEFAULT_DISTR_DIMENSION);
+  const resolvedDimensionByCode = new Map<string, number>();
+
+  if (hasDistributionRules) {
+    const uniqueCodes = new Set<string>();
+    for (const line of input.lines) {
+      const distributionCode = extractDistributionRuleCode(line.distributionRule ?? line.costingCode);
+      if (!distributionCode) continue;
+      uniqueCodes.add(distributionCode);
+    }
+
+    for (const distributionCode of uniqueCodes) {
+      const resolvedDimension = await resolveProfitCenterDimensionByCode(distributionCode, profitCenterDimensions);
+      if (resolvedDimension !== null) {
+        resolvedDimensionByCode.set(distributionCode.toUpperCase(), resolvedDimension);
+      }
+    }
   }
 
   const lines = input.lines
@@ -378,8 +711,21 @@ export async function createPurchaseOrderInSap(input: SapPurchaseOrderCreateInpu
       const warehouseCode = normalizeText(line.warehouseCode);
       if (warehouseCode) mapped.WarehouseCode = warehouseCode;
 
-      const costingCode = normalizeText(line.distributionRule ?? line.costingCode);
-      if (costingCode) mapped.CostingCode = costingCode;
+      const distributionRaw = line.distributionRule ?? line.costingCode;
+      const distributionHierarchy = extractDistributionRuleHierarchy(distributionRaw);
+      const distributionCode = distributionHierarchy[distributionHierarchy.length - 1] ?? null;
+      if (distributionHierarchy.length > 1) {
+        distributionHierarchy.slice(0, 5).forEach((code, index) => {
+          mapped[getCostingCodeFieldName(index + 1)] = code;
+        });
+      } else if (distributionCode) {
+        const explicitDimension = toSapDimension(line.distributionDimension);
+        const mappedDimension =
+          resolvedDimensionByCode.get(distributionCode.toUpperCase()) ??
+          profitCenterDimensions?.get(distributionCode.toUpperCase()) ??
+          null;
+        applyCostingCodeByDimension(mapped, distributionCode, mappedDimension ?? explicitDimension ?? defaultDistributionDimension);
+      }
 
       const usage = parseUsageValue(line.usage);
       if (usage.numeric !== null) mapped.Usage = usage.numeric;
@@ -428,20 +774,100 @@ export async function createPurchaseOrderInSap(input: SapPurchaseOrderCreateInpu
   const paymentMethod = normalizeText(input.paymentMethod);
   if (paymentMethod) payload.PaymentMethod = paymentMethod;
 
-  let response: Record<string, unknown>;
-  try {
-    response = await requestJsonPost<Record<string, unknown>>("/PurchaseOrders", payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error ?? "");
-    if (!isPostingDateRangeError(message)) {
+  let response: Record<string, unknown> | null = null;
+  let currentPayload: Record<string, unknown> = { ...payload };
+  let retriedPostingDate = false;
+  let retriedWithoutWarehouse = false;
+  let retriedDistributionDimension = false;
+
+  while (!response) {
+    try {
+      response = await requestJsonPost<Record<string, unknown>>("/PurchaseOrders", currentPayload);
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+
+      if (isPostingDateRangeError(message) && !retriedPostingDate) {
+        const today = new Date().toISOString().slice(0, 10);
+        currentPayload = {
+          ...currentPayload,
+          DocDate: today,
+          DocDueDate: today,
+          TaxDate: today,
+        };
+        retriedPostingDate = true;
+        continue;
+      }
+
+      if (isWarehouseBranchMismatchError(message) && !retriedWithoutWarehouse) {
+        const documentLines = Array.isArray(currentPayload.DocumentLines)
+          ? (currentPayload.DocumentLines as Record<string, unknown>[])
+          : [];
+        currentPayload = {
+          ...currentPayload,
+          DocumentLines: stripWarehouseCodeFromLines(documentLines),
+        };
+        retriedWithoutWarehouse = true;
+        continue;
+      }
+
+      if (isPaymentMethodBranchMismatchError(message) || isInvalidLinkedPaymentMethodError(message)) {
+        const selectedPaymentMethod = normalizeText(currentPayload.PaymentMethod);
+        const selectedBranch = normalizeText(currentPayload.BPL_IDAssignedToInvoice);
+        if (selectedPaymentMethod) {
+          throw new Error(
+            `${message} | Forma de pagamento enviada: ${selectedPaymentMethod}${selectedBranch ? ` | Filial/BPL: ${selectedBranch}` : ""}`,
+          );
+        }
+        throw error;
+      }
+
+      const distributionError = parseDistributionRuleDimensionError(message);
+      if ((distributionError || isMissingDistributionRuleError(message)) && !retriedDistributionDimension) {
+        const documentLines = Array.isArray(currentPayload.DocumentLines)
+          ? (currentPayload.DocumentLines as Record<string, unknown>[])
+          : [];
+
+        const realigned = await realignDistributionRulesInLines(
+          documentLines,
+          profitCenterDimensions,
+          defaultDistributionDimension,
+        );
+        if (realigned.changed) {
+          currentPayload = {
+            ...currentPayload,
+            DocumentLines: realigned.lines,
+          };
+          retriedDistributionDimension = true;
+          continue;
+        }
+
+        if (distributionError) {
+          const resolvedDimension =
+            (await resolveProfitCenterDimensionByCode(distributionError.distributionCode, profitCenterDimensions)) ??
+            defaultDistributionDimension;
+
+          if (resolvedDimension !== null && resolvedDimension !== distributionError.currentDimension) {
+            currentPayload = {
+              ...currentPayload,
+              DocumentLines: remapDistributionRuleDimensionInLines(
+                documentLines,
+                distributionError.distributionCode,
+                resolvedDimension,
+              ),
+            };
+            retriedDistributionDimension = true;
+            continue;
+          }
+        }
+      }
+
       throw error;
     }
+  }
 
-    const today = new Date().toISOString().slice(0, 10);
-    payload.DocDate = today;
-    payload.DocDueDate = today;
-    payload.TaxDate = today;
-    response = await requestJsonPost<Record<string, unknown>>("/PurchaseOrders", payload);
+  if (!response) {
+    throw new Error("Falha ao gerar pedido de compra no SAP.");
   }
   const docEntry = toSapNumber(response.DocEntry);
   const docNum = toSapNumber(response.DocNum);
@@ -1440,15 +1866,11 @@ async function loadContratoItemCatalogFromSap(): Promise<SapContratoItemCatalog>
     ],
   );
 
-  const centrosCusto = mapRowsToOptions(
+  const centrosCusto = mapProfitCentersToOptions(
     (centrosRows ?? []).filter((item) => {
       const active = normalizeText(item.Active).toLowerCase();
       return active === "" || active === "t" || active === "yes" || active === "tyes";
     }),
-    [
-      ["CenterCode", "CenterName"],
-      ["Code", "Name"],
-    ],
   );
 
   const moedas = mapRowsToOptions(
@@ -1582,6 +2004,43 @@ function mapRowsToOptions(
         }
       }
       return null;
+    })
+    .filter((item): item is SapCatalogOption => item !== null);
+}
+
+function buildCostCenterHierarchyPath(code: string): string {
+  const normalized = normalizeText(code);
+  if (!normalized) return "";
+
+  const segments = normalized
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length <= 1) return normalized;
+
+  const path: string[] = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    path.push(segments.slice(0, index + 1).join("."));
+  }
+  return path.join(";");
+}
+
+function mapProfitCentersToOptions(rows: Record<string, unknown>[]): SapCatalogOption[] {
+  return rows
+    .map((row) => {
+      const value = normalizeText(row.CenterCode ?? row.Code);
+      if (!value) return null;
+
+      const name = normalizeText(row.CenterName ?? row.Name);
+      const hierarchy = buildCostCenterHierarchyPath(value);
+      const codeLabel = hierarchy || value;
+      const label = name ? `${codeLabel} - ${name}` : codeLabel;
+
+      return {
+        value,
+        label,
+      } satisfies SapCatalogOption;
     })
     .filter((item): item is SapCatalogOption => item !== null);
 }

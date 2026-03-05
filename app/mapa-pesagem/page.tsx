@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -130,7 +130,7 @@ const MAPA_FIELDS: FieldDef[] = [
   { key: "pesoTotalArroba", label: "Peso Total(@)", decimal: true, calculated: true },
   { key: "pesoMedioArroba", label: "Peso Medio(@)", decimal: true, calculated: true },
   { key: "quantidadeAnimais", label: "Quantidade Animais", decimal: true },
-  { key: "pesoLiquidoArroba", label: "Peso Liquido(@)", decimal: true, calculated: true },
+  { key: "pesoLiquidoArroba", label: "Peso Líquido(@)", decimal: true, calculated: true },
   { key: "valorArroba", label: "Valor (R$/@)", decimal: true },
   { key: "valorTotal", label: "Valor Total", decimal: true, calculated: true },
   { key: "valorComissao", label: "Valor Comissao", decimal: true },
@@ -692,7 +692,7 @@ function MapaPesagemPageContent() {
                   <th>Quantidade Animal</th>
                   <th>Peso Vivo(KG)</th>
                   <th>Peso Medio(KG)</th>
-                  <th>Acoes</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -724,7 +724,7 @@ function MapaPesagemPageContent() {
                       <td data-label="Quantidade Animal">{row.quantidadeAnimal || "0"}</td>
                       <td data-label="Peso Vivo(KG)">{row.pesoVivoKg || "0"}</td>
                       <td data-label="Peso Medio(KG)">{row.pesoMedioKg || "0"}</td>
-                      <td className="action-cell" data-label="Acoes">
+                      <td className="action-cell" data-label="Ações">
                         <div className="legacy-actions">
                           <button type="button" className="legacy-btn" onClick={() => openEditAnimal(row.idLocal)}>
                             Editar
@@ -981,3 +981,4 @@ function serializeMapaPayload(draft: MapaDraft, animais: AnimalLinha[]): Record<
     descricao: draft.placa || draft.motorista ? `${draft.placa} ${draft.motorista}`.trim() : "MAPA DE PESAGEM",
   };
 }
+

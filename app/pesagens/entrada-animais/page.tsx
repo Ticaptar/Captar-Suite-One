@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FormPageHeader } from "@/components/form-page-header";
+import { LegacyTableSkeleton } from "@/components/legacy-skeleton";
 import { ModuleHeader } from "@/components/module-header";
 import type { PesagemEntradaAnimaisListItem, PesagemStatus } from "@/lib/types/pesagem";
 
@@ -16,7 +17,7 @@ type ListResponse = {
 
 const statusOptions: Array<{ value: ""; label: string } | { value: PesagemStatus; label: string }> = [
   { value: "", label: "Todos os status" },
-  { value: "disponivel", label: "Disponivel" },
+  { value: "disponivel", label: "Disponível" },
   { value: "peso_finalizado", label: "Peso Finalizado" },
   { value: "fechado", label: "Fechado" },
   { value: "cancelado", label: "Cancelado" },
@@ -89,10 +90,10 @@ export default function PesagemEntradaAnimaisListPage() {
     <div className="page-shell min-h-screen px-2 py-2 md:px-3">
       <main className="w-full space-y-2">
         <FormPageHeader
-          title="Pesagem de Caminhao de Entrada de Animal"
-          subtitle="Controle de tickets, pesos, tempos e documentos fiscais da operacao."
+          title="Pesagem de Caminhão de Entrada de Animal"
+          subtitle="Controle de tickets, pesos, tempos e documentos fiscais da operação."
           backHref="/"
-          backLabel="Inicio"
+          backLabel="Início"
         />
         <ModuleHeader />
 
@@ -166,22 +167,16 @@ export default function PesagemEntradaAnimaisListPage() {
                   <th>Contratante</th>
                   <th>Item</th>
                   <th>Data Chegada</th>
-                  <th>Data Saida</th>
+                  <th>Data Saída</th>
                   <th>Placa</th>
                   <th>Equipamento</th>
-                  <th>Operacao</th>
+                  <th>Operação</th>
                   <th>Peso Bruto</th>
-                  <th>Peso Liquido</th>
+                  <th>Peso Líquido</th>
                 </tr>
               </thead>
               <tbody>
-                {loading && (
-                  <tr>
-                    <td colSpan={15} className="legacy-empty">
-                      Carregando pesagens...
-                    </td>
-                  </tr>
-                )}
+                {loading && <LegacyTableSkeleton columns={15} rows={8} />}
                 {!loading && items.length === 0 && (
                   <tr>
                     <td colSpan={15} className="legacy-empty">
@@ -243,7 +238,7 @@ export default function PesagemEntradaAnimaisListPage() {
 }
 
 function statusLabel(status: PesagemStatus): string {
-  if (status === "disponivel") return "Disponivel";
+  if (status === "disponivel") return "Disponível";
   if (status === "peso_finalizado") return "Peso Finalizado";
   if (status === "fechado") return "Fechado";
   return "Cancelado";

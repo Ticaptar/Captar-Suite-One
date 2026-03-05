@@ -7,6 +7,7 @@ import { FormPageHeader } from "@/components/form-page-header";
 import { ModuleHeader } from "@/components/module-header";
 import { queryPnCatalog } from "@/lib/pn-catalog-client";
 import type { ContratoStatus } from "@/lib/types/contrato";
+import type { GtaListItem } from "@/lib/types/gta";
 
 const RESPONSAVEL_JURIDICO_FIXO = "CAMILA CARMO DE CARVALHO - 05500424580";
 
@@ -440,6 +441,10 @@ export default function NovoContratoSaidaAnimaisPage() {
   const [mapas, setMapas] = useState<Record<string, string>[]>([]);
   const [lotesPecuaria, setLotesPecuaria] = useState<Record<string, string>[]>([]);
   const [gtaPecuaria, setGtaPecuaria] = useState<Record<string, string>[]>([]);
+  const [gtaCatalogOptions, setGtaCatalogOptions] = useState<CatalogOption[]>([]);
+  const [gtaCatalogLookup, setGtaCatalogLookup] = useState<Record<string, GtaListItem>>({});
+  const [gtaSearch, setGtaSearch] = useState("");
+  const [loadingGtaCatalog, setLoadingGtaCatalog] = useState(false);
   const [abatesPecuaria, setAbatesPecuaria] = useState<Record<string, string>[]>([]);
   const [clausulaCodigo, setClausulaCodigo] = useState("");
   const [clausulaTitulo, setClausulaTitulo] = useState("");
@@ -953,6 +958,43 @@ export default function NovoContratoSaidaAnimaisPage() {
   }
 
   useEffect(() => {
+    if (modalType !== "gta") {
+      setLoadingGtaCatalog(false);
+      return;
+    }
+
+    let active = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoadingGtaCatalog(true);
+      try {
+        const items = await fetchGtaCatalogItems(gtaSearch, controller.signal);
+        if (!active) return;
+        setGtaCatalogOptions((prev) => mergeGtaCatalogOptions(items, prev, draft.gtaId ?? ""));
+        setGtaCatalogLookup((prev) => {
+          const next = { ...prev };
+          for (const item of items) {
+            next[String(item.id)] = item;
+          }
+          return next;
+        });
+      } catch (loadError) {
+        if (!active) return;
+        if ((loadError as { name?: string })?.name === "AbortError") return;
+        setError(loadError instanceof Error ? loadError.message : "Falha ao pesquisar GTAs.");
+      } finally {
+        if (active) setLoadingGtaCatalog(false);
+      }
+    }, 180);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [draft.gtaId, gtaSearch, modalType]);
+
+  useEffect(() => {
     let active = true;
     async function loadClausulasCatalogo() {
       try {
@@ -1109,8 +1151,10 @@ export default function NovoContratoSaidaAnimaisPage() {
           racaPredominante: asText(dadosGeraisData.racaPredominante) || "",
           precoVendaFutura: Boolean(dadosGeraisData.precoVendaFutura),
         }));
-        setLotesPecuaria(Array.isArray(dadosGeraisData.lotes) ? dadosGeraisData.lotes.map(mapGenericRowFromApi) : []);
-        setGtaPecuaria(Array.isArray(dadosGeraisData.gtaContratos) ? dadosGeraisData.gtaContratos.map(mapGenericRowFromApi) : []);
+        const loteRows = Array.isArray(dadosGeraisData.lotes) ? dadosGeraisData.lotes.map(mapGenericRowFromApi) : [];
+        const gtaRows = Array.isArray(dadosGeraisData.gtaContratos) ? dadosGeraisData.gtaContratos.map(mapGenericRowFromApi) : [];
+        setLotesPecuaria(loteRows);
+        setGtaPecuaria(gtaRows);
         setAbatesPecuaria(Array.isArray(dadosGeraisData.abates) ? dadosGeraisData.abates.map(mapGenericRowFromApi) : []);
 
         setOutros({
@@ -1155,6 +1199,17 @@ export default function NovoContratoSaidaAnimaisPage() {
         setNotas((payload.notas ?? []).map(mapGenericRowFromApi));
         setClausulas((payload.clausulas ?? []).map(mapGenericRowFromApi));
         setMapas((payload.mapas ?? []).map(mapGenericRowFromApi));
+
+        const linkedGtas = await loadLinkedGtaRowsForContrato({
+          contratoId: editingContratoId,
+          contratoNumero: asText(contrato.numero),
+          contratoReferencia: asText(contrato.descricao),
+        }).catch(() => []);
+        if (active && linkedGtas.length > 0) {
+          setGtaPecuaria((prev) => mergeGtaRows(prev, linkedGtas));
+          setGtaCatalogOptions((prev) => mergeGtaCatalogOptionsFromRows(linkedGtas, prev));
+        }
+
         setClausulaCodigo(
           asPositiveString(contrato.clausulaModeloId) ??
             asPositiveString(contrato.clausula_id) ??
@@ -1317,12 +1372,9 @@ export default function NovoContratoSaidaAnimaisPage() {
       });
     }
     if (type === "gta") {
+      setGtaSearch("");
       setDraft({
-        gta: "",
-        peso: "0,00",
-        qtd: "0,00",
-        qtdMacho: "0,00",
-        qtdFemea: "0,00",
+        gtaId: "",
       });
     }
     if (type === "abate") {
@@ -1476,7 +1528,23 @@ export default function NovoContratoSaidaAnimaisPage() {
       return;
     }
     if (modalType === "gta") {
-      setGtaPecuaria((prev) => [...prev, draft]);
+      const gtaId = asText(draft.gtaId);
+      if (!gtaId) {
+        setError("Selecione uma GTA.");
+        return;
+      }
+      const selectedGta = gtaCatalogLookup[gtaId];
+      if (!selectedGta) {
+        setError("GTA selecionada não encontrada.");
+        return;
+      }
+      const nextRow = mapGtaItemToContratoRow(selectedGta);
+      const mergedRows = mergeGtaRows(gtaPecuaria, [nextRow]);
+      if (mergedRows.length === gtaPecuaria.length) {
+        setError("Essa GTA já está vinculada ao contrato.");
+        return;
+      }
+      setGtaPecuaria(mergedRows);
       setModalType(null);
       return;
     }
@@ -1629,10 +1697,15 @@ export default function NovoContratoSaidaAnimaisPage() {
     setModalType("clausula");
   }
 
-  async function handleSaveContract(options?: { gerarPdf?: boolean }) {
+  async function handleSaveContract(options?: { gerarPdf?: boolean; silent?: boolean }): Promise<number | null> {
     setError("");
-    setSuccess("");
-    if (!form.empresaId) return setError("Selecione a empresa/filial.");
+    if (!options?.silent) {
+      setSuccess("");
+    }
+    if (!form.empresaId) {
+      setError("Selecione a empresa/filial.");
+      return null;
+    }
     const empresaSelecionadaBase = empresas.find((item) => String(item.id) === form.empresaId);
     let empresaSelecionada = empresaSelecionadaBase;
     let empresaId = toOptionalInt(form.empresaId);
@@ -1667,7 +1740,10 @@ export default function NovoContratoSaidaAnimaisPage() {
       };
     }
 
-    if (!form.parceiroId) return setError("Selecione o parceiro (PN) para continuar.");
+    if (!form.parceiroId) {
+      setError("Selecione o parceiro (PN) para continuar.");
+      return null;
+    }
     const parceiroSelecionadoBase = parceiros.find((item) => String(item.id) === form.parceiroId);
     let parceiroSelecionado = parceiroSelecionadoBase;
     let parceiroId = toOptionalInt(form.parceiroId);
@@ -1702,7 +1778,10 @@ export default function NovoContratoSaidaAnimaisPage() {
       };
     }
 
-    if (!parceiroId && !parceiroSap?.nome) return setError("Selecione o parceiro (PN) para continuar.");
+    if (!parceiroId && !parceiroSap?.nome) {
+      setError("Selecione o parceiro (PN) para continuar.");
+      return null;
+    }
 
     const comissionadoSelecionadoBase = parceiros.find((item) => String(item.id) === form.comissionadoId);
     let comissionadoSelecionado = comissionadoSelecionadoBase;
@@ -1780,8 +1859,14 @@ export default function NovoContratoSaidaAnimaisPage() {
       },
     );
 
-    if (!isEditMode && !toOptionalInt(form.numero)) return setError("Informe o número do contrato.");
-    if (!form.referenciaContrato.trim()) return setError("Referência do contrato é obrigatória.");
+    if (!isEditMode && !toOptionalInt(form.numero)) {
+      setError("Informe o número do contrato.");
+      return null;
+    }
+    if (!form.referenciaContrato.trim()) {
+      setError("Referência do contrato é obrigatória.");
+      return null;
+    }
     const currentContratoId = isEditMode && editingContratoId ? editingContratoId : savedContratoId;
     const method = currentContratoId ? "PATCH" : "POST";
     const endpoint = currentContratoId
@@ -1850,34 +1935,47 @@ export default function NovoContratoSaidaAnimaisPage() {
       if (contratoId) {
         setSavedContratoId(contratoId);
         setCurrentStatus(normalizeStatusValue(asText(result?.contrato?.status) || currentStatus));
-        setSuccess(method === "POST" ? `Contrato #${contratoId} salvo com sucesso.` : `Contrato #${contratoId} atualizado com sucesso.`);
+        if (!options?.silent) {
+          setSuccess(method === "POST" ? `Contrato #${contratoId} salvo com sucesso.` : `Contrato #${contratoId} atualizado com sucesso.`);
+        }
         router.replace(`/contratos/saida-animais/novo?id=${contratoId}`);
         if (options?.gerarPdf) {
           window.open(`/api/contratos/saida-animais/${contratoId}/pdf`, "_blank", "noopener,noreferrer");
-          return;
+          return contratoId;
         }
-        return;
+        return contratoId;
       }
       router.push("/contratos/saida-animais");
+      return null;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Erro inesperado ao salvar.");
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
   async function handleChangeStatus(nextStatus: ContratoStatus, options?: { gerarPedido?: boolean }) {
-    const contratoId = savedContratoId ?? editingContratoId ?? null;
+    const shouldGenerate = options?.gerarPedido === true;
+    setError("");
+    setSuccess("");
+
+    let contratoId = savedContratoId ?? editingContratoId ?? null;
+    if (shouldGenerate) {
+      const persistedContratoId = await handleSaveContract({ silent: true });
+      if (!persistedContratoId || Number.isNaN(persistedContratoId)) {
+        return;
+      }
+      contratoId = persistedContratoId;
+    }
+
     if (!contratoId || Number.isNaN(contratoId)) {
       setError("Salve o contrato antes de atualizar o status.");
       return;
     }
 
-    setError("");
-    setSuccess("");
     setStatusUpdating(true);
     try {
-      const shouldGenerate = options?.gerarPedido === true;
       const response = await fetch(`/api/contratos/saida-animais/${contratoId}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1966,9 +2064,9 @@ export default function NovoContratoSaidaAnimaisPage() {
               type="button"
               className="legacy-btn"
               onClick={() => handleChangeStatus("ativo", { gerarPedido: true })}
-              disabled={saving || statusUpdating || loadingContrato}
+              disabled={saving || statusUpdating || loadingContrato || currentStatus === "ativo"}
             >
-              {statusUpdating ? "Atualizando..." : "Aprovar/Gerar Pedido"}
+              {statusUpdating ? "Atualizando..." : currentStatus === "ativo" ? "Pedido ja gerado" : "Aprovar/Gerar Pedido"}
             </button>
           </div>
           {loadingContrato && <p className="legacy-message">Carregando contrato...</p>}
@@ -2793,26 +2891,19 @@ export default function NovoContratoSaidaAnimaisPage() {
           ) : modalType === "gta" ? (
             <>
               <div className="legacy-grid cols-4">
-                <label className="legacy-field col-span-2">
-                  <span>GTA</span>
-                  <input className="legacy-input" value={draft.gta ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, gta: event.target.value }))} />
-                </label>
-                <label className="legacy-field">
-                  <span>Peso</span>
-                  <input className="legacy-input" value={draft.peso ?? "0,00"} onChange={(event) => setDraft((prev) => ({ ...prev, peso: formatCurrencyBr(event.target.value) }))} />
-                </label>
-                <label className="legacy-field">
-                  <span>Qtd</span>
-                  <input className="legacy-input" value={draft.qtd ?? "0,00"} onChange={(event) => setDraft((prev) => ({ ...prev, qtd: formatCurrencyBr(event.target.value) }))} />
-                </label>
-                <label className="legacy-field">
-                  <span>Qtd Macho</span>
-                  <input className="legacy-input" value={draft.qtdMacho ?? "0,00"} onChange={(event) => setDraft((prev) => ({ ...prev, qtdMacho: formatCurrencyBr(event.target.value) }))} />
-                </label>
-                <label className="legacy-field">
-                  <span>Qtd Fêmea</span>
-                  <input className="legacy-input" value={draft.qtdFemea ?? "0,00"} onChange={(event) => setDraft((prev) => ({ ...prev, qtdFemea: formatCurrencyBr(event.target.value) }))} />
-                </label>
+                <CatalogAutocompleteField
+                  label="GTA"
+                  className="col-span-4"
+                  options={gtaCatalogOptions}
+                  value={draft.gtaId ?? ""}
+                  onValueChange={(value) => setDraft((prev) => ({ ...prev, gtaId: value }))}
+                  onSearchTextChange={(value) => setGtaSearch(value)}
+                  listId="contrato-gta"
+                  loading={loadingGtaCatalog}
+                />
+                <small className="col-span-4 text-xs text-[#6b7394]">
+                  Selecione a GTA e salve. Quantidades são preenchidas automaticamente.
+                </small>
               </div>
               <div className="legacy-actions mt-3 justify-end"><button type="button" className="legacy-btn primary" onClick={saveModal}>Salvar</button><button type="button" className="legacy-btn" onClick={() => setModalType(null)}>Descartar</button></div>
             </>
@@ -3278,136 +3369,142 @@ function PecuariaSaidaTab({
         </label>
       </div>
 
-      <p className="itens-title mt-3">Contrato lote</p>
-      <div className="legacy-actions mt-2">
-        <button type="button" className="legacy-btn itens-add-btn" onClick={onAddLote}>Adicionar</button>
-      </div>
-      <div className="itens-table-wrap mt-2">
-        <table className="itens-table">
-          <thead>
-            <tr>
-              <th>Lote</th>
-              <th>Curral</th>
-              <th>Categoria</th>
-              <th>Quantidade Total</th>
-              <th>Quantidade Selecionada</th>
-              <th>Peso Médio Bruto</th>
-              <th>Peso Médio Bruto</th>
-              <th>Peso Médio Bruto</th>
-              <th>Arrobas Produzidas</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lotes.length === 0 && (
+      <div className="mt-6">
+        <p className="itens-title">Contrato lote</p>
+        <div className="legacy-actions mt-2">
+          <button type="button" className="legacy-btn itens-add-btn" onClick={onAddLote}>Adicionar</button>
+        </div>
+        <div className="itens-table-wrap mt-2">
+          <table className="itens-table">
+            <thead>
               <tr>
-                <td colSpan={10} className="itens-empty">&nbsp;</td>
+                <th>Lote</th>
+                <th>Curral</th>
+                <th>Categoria</th>
+                <th>Quantidade Total</th>
+                <th>Quantidade Selecionada</th>
+                <th>Peso Médio Bruto</th>
+                <th>Peso Médio Bruto</th>
+                <th>Peso Médio Bruto</th>
+                <th>Arrobas Produzidas</th>
+                <th>Ações</th>
               </tr>
-            )}
-            {lotes.map((row, index) => (
-              <tr key={`${row.lote ?? "lote"}-${index}`}>
-                <td className="left">{row.lote || "-"}</td>
-                <td className="left">{row.curral || "-"}</td>
-                <td className="left">{row.categoria || "-"}</td>
-                <td>{row.quantidadeTotal || "0"}</td>
-                <td>{row.quantidadeSelecionada || "0"}</td>
-                <td>{row.pesoMedioBruto || "0,00"}</td>
-                <td>{row.pesoMedioBruto2 || "0,00"}</td>
-                <td>{row.pesoMedioBruto3 || "0,00"}</td>
-                <td>{row.arrobasProduzidas || "0,00"}</td>
-                <td>
-                  <button type="button" className="legacy-btn" onClick={() => onRemoveLote(index)}>Remover</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {lotes.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="itens-empty">&nbsp;</td>
+                </tr>
+              )}
+              {lotes.map((row, index) => (
+                <tr key={`${row.lote ?? "lote"}-${index}`}>
+                  <td className="left">{row.lote || "-"}</td>
+                  <td className="left">{row.curral || "-"}</td>
+                  <td className="left">{row.categoria || "-"}</td>
+                  <td>{row.quantidadeTotal || "0"}</td>
+                  <td>{row.quantidadeSelecionada || "0"}</td>
+                  <td>{row.pesoMedioBruto || "0,00"}</td>
+                  <td>{row.pesoMedioBruto2 || "0,00"}</td>
+                  <td>{row.pesoMedioBruto3 || "0,00"}</td>
+                  <td>{row.arrobasProduzidas || "0,00"}</td>
+                  <td>
+                    <button type="button" className="legacy-btn" onClick={() => onRemoveLote(index)}>Remover</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <p className="itens-title mt-3">Contrato GTA</p>
-      <div className="legacy-actions mt-2">
-        <button type="button" className="legacy-btn itens-add-btn" onClick={onAddGta}>Adicionar</button>
-      </div>
-      <div className="itens-table-wrap mt-2">
-        <table className="itens-table">
-          <thead>
-            <tr>
-              <th>GTA</th>
-              <th>Peso</th>
-              <th>Qtd</th>
-              <th>Qtd Macho</th>
-              <th>Qtd Fêmea</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {gtaRows.length === 0 && (
+      <div className="mt-7">
+        <p className="itens-title">Contrato GTA</p>
+        <div className="legacy-actions mt-2">
+          <button type="button" className="legacy-btn itens-add-btn" onClick={onAddGta}>Adicionar</button>
+        </div>
+        <div className="itens-table-wrap mt-2">
+          <table className="itens-table">
+            <thead>
               <tr>
-                <td colSpan={6} className="itens-empty">&nbsp;</td>
+                <th>GTA</th>
+                <th>Peso</th>
+                <th>Qtd</th>
+                <th>Qtd Macho</th>
+                <th>Qtd Fêmea</th>
+                <th>Ações</th>
               </tr>
-            )}
-            {gtaRows.map((row, index) => (
-              <tr key={`${row.gta ?? "gta"}-${index}`}>
-                <td className="left">{row.gta || "-"}</td>
-                <td>{row.peso || "0,00"}</td>
-                <td>{row.qtd || "0,00"}</td>
-                <td>{row.qtdMacho || "0,00"}</td>
-                <td>{row.qtdFemea || "0,00"}</td>
-                <td>
-                  <button type="button" className="legacy-btn" onClick={() => onRemoveGta(index)}>Remover</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {gtaRows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="itens-empty">&nbsp;</td>
+                </tr>
+              )}
+              {gtaRows.map((row, index) => (
+                <tr key={`${row.gtaId ?? row.gta ?? "gta"}-${index}`}>
+                  <td className="left">{row.gta || "-"}</td>
+                  <td>{row.peso || "0,00"}</td>
+                  <td>{row.qtd || "0,00"}</td>
+                  <td>{row.qtdMacho || "0,00"}</td>
+                  <td>{row.qtdFemea || "0,00"}</td>
+                  <td>
+                    <button type="button" className="legacy-btn" onClick={() => onRemoveGta(index)}>Remover</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <p className="itens-title mt-3">Abates</p>
-      <div className="legacy-actions mt-2">
-        <button type="button" className="legacy-btn itens-add-btn" onClick={onAddAbate}>Adicionar</button>
-      </div>
-      <div className="itens-table-wrap mt-2">
-        <table className="itens-table">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Data</th>
-              <th>Valor Abate</th>
-              <th>Valor Frete @</th>
-              <th>Cabeças</th>
-              <th>Cabeças Exportação</th>
-              <th>Peso Vivo Total KG</th>
-              <th>Peso Médio Carcaça @</th>
-              <th>RC Fixo %</th>
-              <th>RC Real %</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {abates.length === 0 && (
+      <div className="mt-7">
+        <p className="itens-title">Abates</p>
+        <div className="legacy-actions mt-2">
+          <button type="button" className="legacy-btn itens-add-btn" onClick={onAddAbate}>Adicionar</button>
+        </div>
+        <div className="itens-table-wrap mt-2">
+          <table className="itens-table">
+            <thead>
               <tr>
-                <td colSpan={11} className="itens-empty">&nbsp;</td>
+                <th>Status</th>
+                <th>Data</th>
+                <th>Valor Abate</th>
+                <th>Valor Frete @</th>
+                <th>Cabeças</th>
+                <th>Cabeças Exportação</th>
+                <th>Peso Vivo Total KG</th>
+                <th>Peso Médio Carcaça @</th>
+                <th>RC Fixo %</th>
+                <th>RC Real %</th>
+                <th>Ações</th>
               </tr>
-            )}
-            {abates.map((row, index) => (
-              <tr key={`${row.tipo ?? "abate"}-${index}`}>
-                <td>{row.status || "Aberto"}</td>
-                <td>{row.data || "-"}</td>
-                <td>{row.valorAbate || "0,00"}</td>
-                <td>{row.valorFreteArroba || "0,00"}</td>
-                <td>{row.cabecas || "0,00"}</td>
-                <td>{row.cabecasExportacao || "0,00"}</td>
-                <td>{row.pesoVivoTotalKg || "0,00"}</td>
-                <td>{row.pesoMedioCarcacaArroba || "0,00"}</td>
-                <td>{row.rcFixoPercentual || "0,00"}</td>
-                <td>{row.rcRealPercentual || "0,00"}</td>
-                <td>
-                  <button type="button" className="legacy-btn" onClick={() => onRemoveAbate(index)}>Remover</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {abates.length === 0 && (
+                <tr>
+                  <td colSpan={11} className="itens-empty">&nbsp;</td>
+                </tr>
+              )}
+              {abates.map((row, index) => (
+                <tr key={`${row.tipo ?? "abate"}-${index}`}>
+                  <td>{row.status || "Aberto"}</td>
+                  <td>{row.data || "-"}</td>
+                  <td>{row.valorAbate || "0,00"}</td>
+                  <td>{row.valorFreteArroba || "0,00"}</td>
+                  <td>{row.cabecas || "0,00"}</td>
+                  <td>{row.cabecasExportacao || "0,00"}</td>
+                  <td>{row.pesoVivoTotalKg || "0,00"}</td>
+                  <td>{row.pesoMedioCarcacaArroba || "0,00"}</td>
+                  <td>{row.rcFixoPercentual || "0,00"}</td>
+                  <td>{row.rcRealPercentual || "0,00"}</td>
+                  <td>
+                    <button type="button" className="legacy-btn" onClick={() => onRemoveAbate(index)}>Remover</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
@@ -3597,6 +3694,32 @@ function ClausulasTab({
   onEditar: (index: number) => void;
   onRemove: (index: number) => void;
 }) {
+  const [selecionadas, setSelecionadas] = useState<number[]>([]);
+  const selecionadasAtivas = selecionadas.filter((index) => index >= 0 && index < rows.length);
+  const todosSelecionados = rows.length > 0 && selecionadasAtivas.length === rows.length;
+
+  function toggleClausula(index: number) {
+    setSelecionadas((prev) => {
+      const active = prev.filter((item) => item >= 0 && item < rows.length);
+      return active.includes(index) ? active.filter((item) => item !== index) : [...active, index];
+    });
+  }
+
+  function toggleTodasClausulas(checked: boolean) {
+    if (!checked) {
+      setSelecionadas([]);
+      return;
+    }
+    setSelecionadas(rows.map((_, index) => index));
+  }
+
+  function removerSelecionadas() {
+    if (selecionadasAtivas.length === 0) return;
+    const ordered = [...selecionadasAtivas].sort((a, b) => b - a);
+    ordered.forEach((index) => onRemove(index));
+    setSelecionadas([]);
+  }
+
   return (
     <section className="mt-2">
       <div className="legacy-grid cols-4">
@@ -3628,13 +3751,14 @@ function ClausulasTab({
       <div className="legacy-actions mt-2">
         <button type="button" className="legacy-btn itens-add-btn" onClick={() => void onAdicionar()}>Aplicar Modelo</button>
         <button type="button" className="legacy-btn itens-add-btn" onClick={onNova}>Nova Cláusula</button>
+        <button type="button" className="legacy-btn itens-add-btn" onClick={removerSelecionadas} disabled={selecionadasAtivas.length === 0}>Remover selecionadas</button>
       </div>
       <div className="itens-table-wrap mt-2">
         <table className="itens-table">
           <thead>
             <tr>
               <th style={{ width: "36px" }}>
-                <input type="checkbox" disabled />
+                <input type="checkbox" checked={todosSelecionados} onChange={(event) => toggleTodasClausulas(event.target.checked)} disabled={rows.length === 0} />
               </th>
               <th>Código</th>
               <th>Referência</th>
@@ -3651,14 +3775,17 @@ function ClausulasTab({
             {rows.map((row, index) => (
               <tr key={`${row.codigo ?? "cl"}-${row.referencia ?? "ref"}-${index}`}>
                 <td>
-                  <input type="checkbox" disabled />
+                  <input type="checkbox" checked={selecionadasAtivas.includes(index)} onChange={() => toggleClausula(index)} />
                 </td>
                 <td>{row.codigo || "-"}</td>
                 <td className="left">{row.referencia || "-"}</td>
                 <td className="left">{row.descricao || "-"}</td>
                 <td>
                   <button type="button" className="legacy-btn mr-1" onClick={() => onEditar(index)}>Editar</button>
-                  <button type="button" className="legacy-btn" onClick={() => onRemove(index)}>Remover</button>
+                  <button type="button" className="legacy-btn" onClick={() => {
+                    onRemove(index);
+                    setSelecionadas((prev) => prev.filter((item) => item !== index).map((item) => (item > index ? item - 1 : item)));
+                  }}>Remover</button>
                 </td>
               </tr>
             ))}
@@ -3912,6 +4039,163 @@ function normalizeCatalogOptions(value: unknown): CatalogOption[] {
     }
   }
   return Array.from(deduped.values());
+}
+
+async function fetchGtaCatalogItems(search: string, signal?: AbortSignal): Promise<GtaListItem[]> {
+  const params = new URLSearchParams({
+    tipo: "saida",
+    page: "1",
+    pageSize: "100",
+  });
+  if (search.trim()) params.set("search", search.trim());
+  const response = await fetch(`/api/gta?${params.toString()}`, {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) throw new Error("Falha ao carregar GTAs.");
+  const payload = (await response.json()) as { items?: GtaListItem[] };
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
+async function loadLinkedGtaRowsForContrato(params: {
+  contratoId: number | null;
+  contratoNumero: string;
+  contratoReferencia: string;
+}): Promise<Record<string, string>[]> {
+  const searchTerms = new Set<string>();
+  if (params.contratoId && params.contratoId > 0) {
+    searchTerms.add(`#${params.contratoId}`);
+  }
+  const contratoNumero = params.contratoNumero.trim();
+  if (contratoNumero.length >= 3) {
+    searchTerms.add(contratoNumero);
+  }
+  const contratoReferencia = params.contratoReferencia.trim();
+  if (contratoReferencia.length >= 6) {
+    searchTerms.add(contratoReferencia);
+  }
+  if (searchTerms.size === 0) return [];
+
+  const responses = await Promise.all(Array.from(searchTerms).map((term) => fetchGtaCatalogItems(term)));
+  const linkedById = new Map<string, GtaListItem>();
+  for (const items of responses) {
+    for (const item of items) {
+      if (
+        !isGtaLinkedToContrato(item, {
+          contratoId: params.contratoId,
+          contratoNumero,
+          contratoReferencia,
+        })
+      ) {
+        continue;
+      }
+      linkedById.set(String(item.id), item);
+    }
+  }
+
+  return Array.from(linkedById.values()).map(mapGtaItemToContratoRow);
+}
+
+function normalizeGtaDisplayCode(item: GtaListItem): string {
+  const numero = asText(item.numero);
+  return numero || `#${item.id}`;
+}
+
+function buildGtaCatalogOptionLabel(item: GtaListItem): string {
+  const numero = normalizeGtaDisplayCode(item);
+  const contrato = asText(item.contrato);
+  const local = asText(item.local);
+  const parts = [`#${item.id}`, numero];
+  if (contrato) parts.push(contrato);
+  if (local) parts.push(local);
+  return parts.join(" | ");
+}
+
+function mapGtaItemToContratoRow(item: GtaListItem): Record<string, string> {
+  return {
+    gtaId: String(item.id),
+    gta: normalizeGtaDisplayCode(item),
+    peso: "0,00",
+    qtd: formatNumberFromUnknown(item.total),
+    qtdMacho: formatNumberFromUnknown(item.quantidadeMachos),
+    qtdFemea: formatNumberFromUnknown(item.quantidadeFemeas),
+  };
+}
+
+function mergeGtaCatalogOptions(
+  loadedItems: GtaListItem[],
+  previous: CatalogOption[],
+  selectedValue: string,
+): CatalogOption[] {
+  const loaded = normalizeCatalogOptions(
+    loadedItems.map((item) => ({
+      value: String(item.id),
+      label: buildGtaCatalogOptionLabel(item),
+    })),
+  );
+  if (selectedValue && !loaded.some((option) => option.value === selectedValue)) {
+    const selected = previous.find((option) => option.value === selectedValue);
+    if (selected) return [selected, ...loaded];
+  }
+  return loaded;
+}
+
+function mergeGtaCatalogOptionsFromRows(rows: Record<string, string>[], previous: CatalogOption[]): CatalogOption[] {
+  const mapped = rows
+    .map((row) => {
+      const id = asText(row.gtaId);
+      const numero = asText(row.gta);
+      if (!numero) return null;
+      const value = id || `manual:${numero}`;
+      return {
+        value,
+        label: id ? `#${id} | ${numero}` : numero,
+      };
+    })
+    .filter((item): item is CatalogOption => item !== null);
+
+  return normalizeCatalogOptions([...mapped, ...previous]);
+}
+
+function mergeGtaRows(current: Record<string, string>[], incoming: Record<string, string>[]): Record<string, string>[] {
+  if (incoming.length === 0) return current;
+
+  const next = [...current];
+  const seenIds = new Set(current.map((row) => asText(row.gtaId)).filter((value) => value.length > 0));
+  const seenNumeros = new Set(
+    current
+      .map((row) => normalizeSearchTerm(asText(row.gta)))
+      .filter((value) => value.length > 0),
+  );
+
+  for (const row of incoming) {
+    const id = asText(row.gtaId);
+    const numero = normalizeSearchTerm(asText(row.gta));
+    if ((id && seenIds.has(id)) || (numero && seenNumeros.has(numero))) continue;
+    next.push(row);
+    if (id) seenIds.add(id);
+    if (numero) seenNumeros.add(numero);
+  }
+
+  return next;
+}
+
+function isGtaLinkedToContrato(
+  item: GtaListItem,
+  params: { contratoId: number | null; contratoNumero: string; contratoReferencia: string },
+): boolean {
+  const contrato = normalizeSearchTerm(asText(item.contrato));
+  if (!contrato) return false;
+
+  if (params.contratoId && contrato.includes(`#${params.contratoId}`)) return true;
+
+  const numero = normalizeSearchTerm(params.contratoNumero);
+  if (numero.length >= 3 && contrato.includes(numero)) return true;
+
+  const referencia = normalizeSearchTerm(params.contratoReferencia);
+  if (referencia.length >= 6 && contrato.includes(referencia)) return true;
+
+  return false;
 }
 
 function createEmptyItemDraft(catalog: ItemCatalog): ItemDraft {
